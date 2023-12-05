@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <ArduinoJson.h>
 
 extern "C"
 {
@@ -41,13 +42,18 @@ float adcMax = 4096;
 float Vs = 3.3;
 
 const char delim[2] = "/";
+
+// Published Topics
 const char *mainPubTopic = "floortherm/"; // Topic to publish
 const char *aliveTopic = "floortherm/alive";
-const char *SubTopic = "floortherm/#";
+const char *statusTopic = "floortherm/status";
 
+// Subscribed Topics
+const char *SubTopic = "floortherm/#";
 const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
 
+// Zone Data
 const char *zoneNames[] = {"MBR", "UpHall", "Office", "SV", "MV"};
 const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
 int inPins[] = {32, 33, 34, 35, 36};
@@ -58,9 +64,16 @@ int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeatEnable[] = {false, false, false, false, false};
 bool zoneHeating[] = {false, false, false, false, false};
 
+// Topic Commands
 const char *enableCommand = "enable";
+const char *enCommand = "en";
 const char *setCommand = "set";
 
+const char *getCommand = "get";
+const char *statusReport = "status";
+
+const int docCapacity = JSON_OBJECT_SIZE(5) + 5 * JSON_OBJECT_SIZE(4);
+const int roomDocCapacity = JSON_OBJECT_SIZE(4);
 AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
 TimerHandle_t wifiReconnectTimer;
@@ -194,19 +207,53 @@ void onMqttUnsubscribe(const uint16_t &packetId)
   Serial.println(packetId);
 }
 
+String getRoomStatusJson(int i)
+{
+
+  StaticJsonDocument<roomDocCapacity> doc;
+  String payload;
+
+  doc["CurrentTemp"] = zoneActualTemp[i];
+  doc["Enabled"] = zoneHeatEnable[i];
+  doc["SetTemp"] = zoneSetTemp[i];
+  doc["Heating"] = zoneHeating[i];
+
+  serializeJson(doc, payload);
+  return payload;
+}
+
+String getStatusJson()
+{
+
+  StaticJsonDocument<docCapacity> doc;
+  String payload;
+
+  for (int i = 0; i < 5; i++)
+  {
+    doc[zoneNames[i]]["CurrentTemp"] = zoneActualTemp[i];
+    doc[zoneNames[i]]["Enabled"] = zoneHeatEnable[i];
+    doc[zoneNames[i]]["SetTemp"] = zoneSetTemp[i];
+    doc[zoneNames[i]]["Heating"] = zoneHeating[i];
+  }
+
+  serializeJson(doc, payload);
+  return payload;
+}
+
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
 {
   (void)payload;
 
   String recTopic = String(topic);
+  bool foundZone = false;
 
   Serial.print("Received");
   Serial.print("  topic: ");
   Serial.println(topic);
 
   char *message;
-  char *targetRoom;
+  char *target;
   char *command;
   char *token;
   int i = 0;
@@ -220,7 +267,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
     i++;
     if (i == 1)
     {
-      targetRoom = token;
+      target = token;
     }
     else if (i == 2)
     {
@@ -236,9 +283,9 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   else
     Serial.println("!!!EMPTY!!!");
 
-  Serial.print("Target Room: ");
-  if (targetRoom != NULL)
-    Serial.println(targetRoom);
+  Serial.print("Target: ");
+  if (target != NULL)
+    Serial.println(target);
   else
     Serial.println("!!!EMPTY!!!");
 
@@ -256,12 +303,13 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   {
     while (i < 5)
     {
-      if (strcmp(targetRoom, zoneNames[i]) == 0)
+      if (strcmp(target, zoneNames[i]) == 0)
       {
         int sentval = atoi(payload);
         Serial.println(sentval);
         if (strcmp(command, enableCommand) == 0)
         {
+          foundZone = true;
           if (zoneHeatEnable[i] != (bool)sentval)
           {
             // Send MQTT message that Enabled State Changed
@@ -290,12 +338,55 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
           zoneSetTemp[i] = (float)sentval;
         }
       }
+      else if (strcmp(target, statusReport) == 0)
+      {
+        Serial.println((char *)payload);
+      }
       i++;
     }
   }
   else
   {
     Serial.println("!!!EMPTY!!!");
+    i = 0;
+
+    if (strcmp(target, getCommand) == 0)
+    {
+      if (command != NULL)
+      {
+        
+        while (i < 5)
+        {
+          if (strcmp(command, zoneNames[i]) == 0)
+          {
+            char *topicString = strdup(statusTopic);
+            strcat(topicString, "/");
+            strcat(topicString, zoneNames[i]);
+            Serial.print("Topic: ");
+            Serial.println(topicString);
+            char *roomStatus = (char *)getRoomStatusJson(i).c_str();
+            int rsLen = strlen(roomStatus);
+            if (roomStatus[rsLen-1] == '\n')
+            {
+              roomStatus[rsLen - 1] = '\0';
+            }
+            Serial.println(roomStatus);
+            mqttClient.publish(topicString, 0, false, roomStatus);
+            Serial.println("Publishing Status at QoS 0");
+            break;
+          }
+          i++;
+        }
+      }
+      else
+      {
+        // Publish Status
+        const char *status = getStatusJson().c_str();
+        Serial.println(status);
+        mqttClient.publish(statusTopic, 0, false, status, strlen(status));
+        Serial.println("Publishing Status at QoS 0");
+      }
+    }
   }
 
   Serial.println();
