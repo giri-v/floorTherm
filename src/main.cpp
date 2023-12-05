@@ -240,10 +240,15 @@ String getStatusJson()
   return payload;
 }
 
+
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
 {
-  (void)payload;
+  //(void)payload;
+  char msg[len + 1];
+
+  memcpy(msg, payload, len);
+  msg[len] = 0;
 
   String recTopic = String(topic);
   bool foundZone = false;
@@ -301,48 +306,51 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   Serial.print("Payload: ");
   if (len > 0)
   {
-    while (i < 5)
+    if (strcmp(target, statusReport) == 0)
     {
-      if (strcmp(target, zoneNames[i]) == 0)
+      Serial.println(msg);
+    }
+    else
+    {
+      while (i < 5)
       {
-        int sentval = atoi(payload);
-        Serial.println(sentval);
-        if (strcmp(command, enableCommand) == 0)
+        if (strcmp(target, zoneNames[i]) == 0)
         {
-          foundZone = true;
-          if (zoneHeatEnable[i] != (bool)sentval)
+          int sentval = atoi(msg);
+          Serial.println(sentval);
+          if (strcmp(command, enableCommand) == 0)
           {
-            // Send MQTT message that Enabled State Changed
-            Serial.print("Enable State Changed from ");
-            if (!zoneHeatEnable[i])
+            foundZone = true;
+            if (zoneHeatEnable[i] != (bool)sentval)
             {
-              Serial.println("Disabled ---> Enabled");
+              // Send MQTT message that Enabled State Changed
+              Serial.print("Enable State Changed from ");
+              if (!zoneHeatEnable[i])
+              {
+                Serial.println("Disabled ---> Enabled");
+              }
+              else
+              {
+                Serial.println("Enabled ---> Disabled");
+              }
             }
-            else
-            {
-              Serial.println("Enabled ---> Disabled");
-            }
+            zoneHeatEnable[i] = (bool)sentval;
           }
-          zoneHeatEnable[i] = (bool)sentval;
-        }
-        else if (strcmp(command, setCommand) == 0)
-        {
-          if (zoneSetTemp[i] != sentval)
+          else if (strcmp(command, setCommand) == 0)
           {
-            // Send MQTT message that Set Temp Changed
-            Serial.print(zoneSetTemp[i]);
-            Serial.print("F --> ");
-            Serial.print(sentval);
-            Serial.println("F");
+            if (zoneSetTemp[i] != sentval)
+            {
+              // Send MQTT message that Set Temp Changed
+              Serial.print(zoneSetTemp[i]);
+              Serial.print("F --> ");
+              Serial.print(sentval);
+              Serial.println("F");
+            }
+            zoneSetTemp[i] = (float)sentval;
           }
-          zoneSetTemp[i] = (float)sentval;
         }
+        i++;
       }
-      else if (strcmp(target, statusReport) == 0)
-      {
-        Serial.println((char *)payload);
-      }
-      i++;
     }
   }
   else
@@ -352,9 +360,9 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
 
     if (strcmp(target, getCommand) == 0)
     {
+      Serial.println("Processing GET command!");
       if (command != NULL)
       {
-        
         while (i < 5)
         {
           if (strcmp(command, zoneNames[i]) == 0)
@@ -364,14 +372,11 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
             strcat(topicString, zoneNames[i]);
             Serial.print("Topic: ");
             Serial.println(topicString);
-            char *roomStatus = (char *)getRoomStatusJson(i).c_str();
-            int rsLen = strlen(roomStatus);
-            if (roomStatus[rsLen-1] == '\n')
-            {
-              roomStatus[rsLen - 1] = '\0';
-            }
-            Serial.println(roomStatus);
-            mqttClient.publish(topicString, 0, false, roomStatus);
+            String rDoc = getRoomStatusJson(i);
+            const char *doc = rDoc.c_str();
+            Serial.print("Payload: ");
+            Serial.println(doc);
+            mqttClient.publish(topicString, 0, false, doc);
             Serial.println("Publishing Status at QoS 0");
             break;
           }
@@ -381,9 +386,13 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
       else
       {
         // Publish Status
-        const char *status = getStatusJson().c_str();
-        Serial.println(status);
-        mqttClient.publish(statusTopic, 0, false, status, strlen(status));
+        String oDoc = getStatusJson();
+        const char *doc = oDoc.c_str();
+        Serial.print("Topic: ");
+        Serial.println(statusTopic);
+        Serial.print("Payload: ");
+        Serial.println(doc);
+        mqttClient.publish(statusTopic, 0, false, doc);
         Serial.println("Publishing Status at QoS 0");
       }
     }
