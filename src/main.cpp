@@ -7,6 +7,7 @@
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
+#include <Fonts/FreeSans9pt7b.h>
 #include <ArduinoJson.h>
 
 extern "C"
@@ -32,7 +33,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 #define I2C_SDA 21          /// ESP8266 NodeMCU SDA pin GPIO4 = D2
 #define I2C_SCL 22          /// ESP8266 NodeMCU SCL pin GPIO5 = D1
-#define SCREEN_ADDRESS 0x78 /// 0x3C for SSD1315 OLED
+#define SCREEN_ADDRESS 0x3C /// 0x3C for SSD1315 OLED
 
 float Rref = 10000.0;
 float Beta = 3950.0;
@@ -40,6 +41,8 @@ float To = 298.15;
 float Ro = 10000.0;
 float adcMax = 4096;
 float Vs = 3.3;
+
+bool ledOn = true;
 
 const char delim[2] = "/";
 
@@ -54,9 +57,9 @@ const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
 
 // Zone Data
-const char *zoneNames[] = {"MBR", "UpHall", "Office", "SV", "MV"};
+const char *zoneNames[] = {"MBR", "UPH", "OFC", "SMV", "MAV"};
 const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
-int inPins[] = {32, 33, 34, 35, 36};
+int inPins[] = {33, 32, 35, 34, 36};
 int outPins[] = {16, 17, 18, 19, 23};
 float zoneSetTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
 float zoneActualTemp[] = {72, 72, 72, 72, 72};
@@ -74,6 +77,7 @@ const char *statusReport = "status";
 
 const int docCapacity = JSON_OBJECT_SIZE(5) + 5 * JSON_OBJECT_SIZE(4);
 const int roomDocCapacity = JSON_OBJECT_SIZE(4);
+int logDisplayCounter = 0;
 AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
 TimerHandle_t wifiReconnectTimer;
@@ -239,7 +243,6 @@ String getStatusJson()
   serializeJson(doc, payload);
   return payload;
 }
-
 
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
@@ -523,7 +526,65 @@ void logHeatingStatus()
       Serial.println();
     }
   }
-  Serial.println();
+  // Serial.println();
+}
+
+void displayHeatingStatus()
+{
+  int x = 35;
+  int y = 1;
+
+  display.clearDisplay();
+  display.display();
+  display.setCursor(x, y);
+  display.print("FloorTherm");
+  y = 15;
+  for (int j = 0; j < 5; j++)
+  {
+    if (!zoneHeatEnable[j] && zoneHeating[j])
+    {
+      Serial.println("!!! ERROR !!!");
+    }
+    else
+    {
+      // Serial.println();
+    }
+    x = 1;
+    display.setCursor(x, y);
+    display.print(zoneNames[j]);
+
+    x += 45;
+    display.setCursor(x, y);
+    display.print(zoneActualTemp[j], 0);
+    display.print("F");
+
+    x += 30;
+    display.setCursor(x, y);
+    if (zoneHeatEnable[j])
+    {
+      display.print(zoneSetTemp[j], 0);
+      display.print("F");
+
+      x += 10;
+      display.setCursor(x, y);
+
+      if (zoneHeating[j])
+      {
+        display.print("HEATING");
+      }
+      else
+      {
+        display.print("NOT HEATING");
+      }
+    }
+    else
+    {
+      display.print("Disabled");
+    }
+
+    y += 10;
+  }
+  display.display();
 }
 
 void setupDisplay()
@@ -539,15 +600,20 @@ void setupDisplay()
   else
   {
     Serial.println("Display initializing...");
-    delay(200);                                  /// time for board to initialize?
-    display.clearDisplay();                      ///
-    display.setTextColor(WHITE);                 ///
-    display.setTextSize(1);                      ///
-    display.setCursor(10, 30);                   ///
-    display.print("FloorTherm Initializing..."); ///
-    display.display();                           /// needed to actually display the message
-    delay(1000);                                 /// time for message to stay up
+    delay(200);                  /// time for board to initialize?
+    display.clearDisplay();      ///
+    display.setTextColor(WHITE); ///
+    // display.setFont(&FreeSans9pt7b);
+    display.setTextSize(2);      ///
+    display.setCursor(5, 1);     ///
+    display.print("FloorTherm"); ///
+    display.setTextSize(1);      ///
+    display.setCursor(1, 25);
+    display.print("Starting");
+    display.display(); /// needed to actually display the message
+    delay(5000);       /// time for message to stay up
     display.clearDisplay();
+    display.display();
     Serial.println("Display setup complete!");
   }
 }
@@ -598,13 +664,17 @@ void setup()
 
 void loop()
 {
+  logDisplayCounter++;
   GetTemps();
   SetHeatControl();
-  logHeatingStatus();
+  displayHeatingStatus();
+  if (logDisplayCounter > 9)
+  {
+    logHeatingStatus();
+    logDisplayCounter = 0;
+  }
   delay(1000);
 
-  delay(500);
-  digitalWrite(LED_PIN, HIGH);
-  delay(500);
-  digitalWrite(LED_PIN, LOW);
+  ledOn = !ledOn;
+  digitalWrite(LED_PIN, ledOn);
 }
