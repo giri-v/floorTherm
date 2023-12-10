@@ -36,7 +36,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define SCREEN_ADDRESS 0x3C /// 0x3C for SSD1315 OLED
 
 float Rref = 10000.0;
-float Beta = 3950.0;
+float Beta = 3894;   //3950.0;
 float To = 298.15;
 float Ro = 10000.0;
 float adcMax = 4096;
@@ -66,6 +66,7 @@ float zoneActualTemp[] = {72, 72, 72, 72, 72};
 int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeatEnable[] = {false, false, false, false, false};
 bool zoneHeating[] = {false, false, false, false, false};
+int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
 
 // Topic Commands
 const char *enableCommand = "enable";
@@ -441,26 +442,20 @@ float ConvertValToTemp(int Vo)
 
 void GetTemps()
 {
-  Serial.println("\nReading Temps...");
+  Serial.println("Reading Temps...");
   for (int i = 0; i < 5; i++)
   {
     int avg = 0;
-    for (int j = 0; j < 50; j++)
+    for (int j = 0; j < 10; j++)
     {
-      avg += analogRead(inPins[i]);
+      int readVal = analogRead(inPins[i]);
+      avg += readVal;
       delay(10);
     }
-    zoneReadVal[i] = avg / 50.0;
+    zoneReadVal[i] = avg / 10.0;
     zoneActualTemp[i] = ConvertValToTemp(zoneReadVal[i]);
 
-    /*
-    Serial.print(zoneNames[i]);
-    Serial.print(": ");
-    //Serial.println(zoneActualTemp[i]);
-    Serial.println(zoneReadVal[i]);
-    */
   }
-  Serial.println();
 }
 
 void SetHeatControl()
@@ -468,7 +463,7 @@ void SetHeatControl()
 
   for (int i = 0; i < 5; i++)
   {
-    if ((zoneActualTemp[i] < zoneSetTemp[i]) && zoneHeatEnable[i])
+    if ((zoneActualTemp[i] < zoneSetTemp[i]) && zoneHeatEnable[i] && (zoneActualTemp[i] < 90))
     {
       zoneHeating[i] = true;
     }
@@ -517,7 +512,7 @@ void logHeatingStatus()
       Serial.print("Disabled");
     }
 
-    if (!zoneHeatEnable[j] && zoneHeating[j])
+    if ((!zoneHeatEnable[j] && zoneHeating[j]) || ((zoneActualTemp[j] > 90) && zoneHeating[j]))
     {
       Serial.println("!!! ERROR !!!");
     }
@@ -541,47 +536,65 @@ void displayHeatingStatus()
   y = 15;
   for (int j = 0; j < 5; j++)
   {
-    if (!zoneHeatEnable[j] && zoneHeating[j])
-    {
-      Serial.println("!!! ERROR !!!");
-    }
-    else
-    {
-      // Serial.println();
-    }
     x = 1;
     display.setCursor(x, y);
     display.print(zoneNames[j]);
 
-    x += 45;
-    display.setCursor(x, y);
-    display.print(zoneActualTemp[j], 0);
-    display.print("F");
-
-    x += 30;
-    display.setCursor(x, y);
-    if (zoneHeatEnable[j])
+    if ((!zoneHeatEnable[j] && zoneHeating[j]) || ((zoneActualTemp[j] > 90) && zoneHeating[j]))
     {
-      display.print(zoneSetTemp[j], 0);
-      display.print("F");
-
-      x += 10;
-      display.setCursor(x, y);
-
-      if (zoneHeating[j])
-      {
-        display.print("HEATING");
-      }
-      else
-      {
-        display.print("NOT HEATING");
-      }
+      Serial.println("!!! ERROR !!!");
+      // Should also send MQTT message to alert someone
+      continue;
     }
     else
     {
-      display.print("Disabled");
-    }
+      // Serial.println();
 
+      x += 35;
+      display.setCursor(x, y);
+      display.print(zoneActualTemp[j], 0);
+      display.print("F");
+
+      x += 15;
+      display.setCursor(x, y);
+      if (zoneHeatEnable[j])
+      {
+        if (zoneHeating[j])
+        {
+          // display.print("HEATING");
+          for (int k = 0; k < 9; k++)
+          {
+            x += 5;
+            if (k == zoneHeatArrowCounter[j])
+            {
+              display.setCursor(x, y);
+              display.print(">");
+            }
+          }
+          zoneHeatArrowCounter[j]++;
+          if (zoneHeatArrowCounter[j] > 8)
+          {
+            zoneHeatArrowCounter[j] = 0;
+          }
+
+          x += 10;
+          display.setCursor(x, y);
+          display.print(zoneSetTemp[j], 0);
+          display.print("F");
+        }
+        else
+        {
+          display.print("NOT HEATING");
+        }
+
+        x += 10;
+        display.setCursor(x, y);
+      }
+      else
+      {
+        // display.print("Disabled");
+      }
+    }
     y += 10;
   }
   display.display();
@@ -673,7 +686,7 @@ void loop()
     logHeatingStatus();
     logDisplayCounter = 0;
   }
-  delay(1000);
+  //delay(1000);
 
   ledOn = !ledOn;
   digitalWrite(LED_PIN, ledOn);
