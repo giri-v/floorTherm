@@ -36,7 +36,7 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define SCREEN_ADDRESS 0x3C /// 0x3C for SSD1315 OLED
 
 float Rref = 10000.0;
-float Beta = 3894;   //3950.0;
+float Beta = 3894; // 3950.0;
 float To = 298.15;
 float Ro = 10000.0;
 float adcMax = 4096;
@@ -48,7 +48,9 @@ const char delim[2] = "/";
 
 // Published Topics
 const char *mainPubTopic = "floortherm/"; // Topic to publish
-const char *aliveTopic = "floortherm/alive";
+const char *aliveTopic = "floortherm/online";
+
+const char *willTopic = "floortherm/offline";
 const char *statusTopic = "floortherm/status";
 
 // Subscribed Topics
@@ -57,16 +59,19 @@ const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
 
 // Zone Data
-const char *zoneNames[] = {"MBR", "UPH", "OFC", "SMV", "MAV"};
+const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
+const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
 const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
-int inPins[] = {33, 32, 35, 34, 36};
+int inPins[] = {32, 33, 34, 35, 36};
 int outPins[] = {16, 17, 18, 19, 23};
-float zoneSetTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
-float zoneActualTemp[] = {72, 72, 72, 72, 72};
+int zoneSetTemp[] = {72, 72, 72, 72, 72};
+float zoneActualTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
 int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeatEnable[] = {false, false, false, false, false};
 bool zoneHeating[] = {false, false, false, false, false};
 int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
+
+unsigned long lastStatusBroadcast = 0;
 
 // Topic Commands
 const char *enableCommand = "enable";
@@ -178,7 +183,7 @@ void onMqttConnect(bool sessionPresent)
   mqttClient.publish(aliveTopic, 0, true, "1");
   Serial.println("Publishing at QoS 0");
 
-  mqttClient.setWill(aliveTopic, 0, true, "0");
+  mqttClient.setWill(willTopic, 0, true, "1");
   Serial.println("Set Last Will and Testament message.");
 
   printSeparationLine();
@@ -243,6 +248,19 @@ String getStatusJson()
 
   serializeJson(doc, payload);
   return payload;
+}
+
+void publishHeatingStatus()
+{
+  // Publish Status
+  String oDoc = getStatusJson();
+  const char *doc = oDoc.c_str();
+  Serial.print("Topic: ");
+  Serial.println(statusTopic);
+  Serial.print("Payload: ");
+  Serial.println(doc);
+  mqttClient.publish(statusTopic, 0, false, doc);
+  Serial.println("Publishing Status at QoS 0");
 }
 
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
@@ -350,7 +368,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
               Serial.print(sentval);
               Serial.println("F");
             }
-            zoneSetTemp[i] = (float)sentval;
+            zoneSetTemp[i] = sentval;
           }
         }
         i++;
@@ -389,15 +407,8 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
       }
       else
       {
-        // Publish Status
-        String oDoc = getStatusJson();
-        const char *doc = oDoc.c_str();
-        Serial.print("Topic: ");
-        Serial.println(statusTopic);
-        Serial.print("Payload: ");
-        Serial.println(doc);
-        mqttClient.publish(statusTopic, 0, false, doc);
-        Serial.println("Publishing Status at QoS 0");
+        // Publish Heating Status
+        publishHeatingStatus();
       }
     }
   }
@@ -454,7 +465,6 @@ void GetTemps()
     }
     zoneReadVal[i] = avg / 10.0;
     zoneActualTemp[i] = ConvertValToTemp(zoneReadVal[i]);
-
   }
 }
 
@@ -463,9 +473,12 @@ void SetHeatControl()
 
   for (int i = 0; i < 5; i++)
   {
-    if ((zoneActualTemp[i] < zoneSetTemp[i]) && zoneHeatEnable[i] && (zoneActualTemp[i] < 90))
+    if ((zoneActualTemp[i] <= zoneSetTemp[i]) && zoneHeatEnable[i] && (zoneActualTemp[i] < 90))
     {
-      zoneHeating[i] = true;
+      if (zoneActualTemp[i] < zoneSetTemp[i])
+      {
+        zoneHeating[i] = true;
+      }
     }
     else
     {
@@ -686,7 +699,22 @@ void loop()
     logHeatingStatus();
     logDisplayCounter = 0;
   }
-  //delay(1000);
+  // delay(1000);
+
+  bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
+  unsigned long rightNow = millis();
+  if (anyEnabled)
+  {
+    if (rightNow > lastStatusBroadcast + 60000)
+    {
+      publishHeatingStatus();
+      lastStatusBroadcast = millis();
+    }
+  }
+  else
+  {
+    lastStatusBroadcast = 0;
+  }
 
   ledOn = !ledOn;
   digitalWrite(LED_PIN, ledOn);
