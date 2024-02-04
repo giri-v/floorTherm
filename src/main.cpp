@@ -53,6 +53,8 @@ const char *aliveTopic = "floortherm/online";
 const char *willTopic = "floortherm/offline";
 const char *statusTopic = "floortherm/status";
 
+const char *alarmTopic = "floortherm/alarm";
+
 // Subscribed Topics
 const char *SubTopic = "floortherm/#";
 const char *setTempTopic = "floortherm/#/set";
@@ -453,7 +455,7 @@ float ConvertValToTemp(int Vo)
 
 void GetTemps()
 {
-  Serial.println("Reading Temps...");
+  Serial.print(".");
   for (int i = 0; i < 5; i++)
   {
     int avg = 0;
@@ -465,6 +467,19 @@ void GetTemps()
     }
     zoneReadVal[i] = avg / 10.0;
     zoneActualTemp[i] = ConvertValToTemp(zoneReadVal[i]);
+
+    if ((zoneActualTemp[i] > 92) && (logDisplayCounter > 9))
+    {
+      const char *warningText = "Over 92 degrees!!!";
+      //char *alarmMessage = strdup(zoneNames[i]);
+      char *alarmMessage = strdup(warningText);
+      // String aMsg = zoneNames[i] + warningText;
+
+      //strcat(alarmMessage, warningText);
+      //strcat(alarmMessage, "Over 92 degrees!!!");
+      const char *msg = alarmMessage;
+      mqttClient.publish(alarmTopic, 0, false, alarmMessage);
+    }
   }
 }
 
@@ -485,7 +500,15 @@ void SetHeatControl()
       zoneHeating[i] = false;
     }
 
-    digitalWrite(outPins[i], zoneHeating[i]);
+    if ((!zoneHeatEnable[i] && zoneHeating[i]) || ((zoneActualTemp[i] > 90) && zoneHeating[i]))
+    {
+      Serial.println("!!! ERROR !!!");
+      // Should also send MQTT message to alert someone
+    }
+    else
+    {
+      digitalWrite(outPins[i], zoneHeating[i]);
+    }
   }
 }
 
@@ -553,14 +576,6 @@ void displayHeatingStatus()
     display.setCursor(x, y);
     display.print(zoneNames[j]);
 
-    if ((!zoneHeatEnable[j] && zoneHeating[j]) || ((zoneActualTemp[j] > 90) && zoneHeating[j]))
-    {
-      Serial.println("!!! ERROR !!!");
-      // Should also send MQTT message to alert someone
-      continue;
-    }
-    else
-    {
       // Serial.println();
 
       x += 35;
@@ -607,7 +622,6 @@ void displayHeatingStatus()
       {
         // display.print("Disabled");
       }
-    }
     y += 10;
   }
   display.display();
@@ -667,8 +681,9 @@ void setup()
 
   setupDisplay();
 
+  Serial.print("Reading Temps.");
   GetTemps();
-
+  Serial.println(".");
   mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
                                     reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
   wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
@@ -696,7 +711,11 @@ void loop()
   displayHeatingStatus();
   if (logDisplayCounter > 9)
   {
+    Serial.println("");
+    Serial.println("");
     logHeatingStatus();
+    Serial.println("");
+    Serial.print("Reading Temps");
     logDisplayCounter = 0;
   }
   // delay(1000);
