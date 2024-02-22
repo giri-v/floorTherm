@@ -219,6 +219,19 @@ void onMqttUnsubscribe(const uint16_t &packetId)
   Serial.println(packetId);
 }
 
+void publishZoneAlarmMessage(char *zoneName, char *message)
+{
+  const char *slash = "/";
+
+  char *topic = strdup(alarmTopic);
+  strcat(topic, slash);
+  strcat(topic, zoneName);
+
+  char *alarmMessage = message;
+  const char *msg = alarmMessage;
+  mqttClient.publish(topic, 0, false, alarmMessage);
+}
+
 String getRoomStatusJson(int i)
 {
 
@@ -268,9 +281,9 @@ void publishHeatingStatus()
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
 {
+  // This safely extracts the proper payload message
   //(void)payload;
   char msg[len + 1];
-
   memcpy(msg, payload, len);
   msg[len] = 0;
 
@@ -328,108 +341,76 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   Serial.println(len);
 
   Serial.print("Payload: ");
-  if (len > 0)
+
+  if (strcmp(target, statusReport) == 0)
   {
-    if (strcmp(target, statusReport) == 0)
-    {
-      Serial.println(msg);
-    }
-    else
-    {
-      while (i < 5)
-      {
-        if (strcmp(target, zoneNames[i]) == 0)
-        {
-          int sentval = atoi(msg);
-          Serial.println(sentval);
-          if (strcmp(command, enableCommand) == 0)
-          {
-            foundZone = true;
-            if (zoneHeatEnable[i] != (bool)sentval)
-            {
-              // Send MQTT message that Enabled State Changed
-              Serial.print("Enable State Changed from ");
-              if (!zoneHeatEnable[i])
-              {
-                Serial.println("Disabled ---> Enabled");
-              }
-              else
-              {
-                Serial.println("Enabled ---> Disabled");
-              }
-            }
-            zoneHeatEnable[i] = (bool)sentval;
-          }
-          else if (strcmp(command, setCommand) == 0)
-          {
-            if (zoneSetTemp[i] != sentval)
-            {
-              // Send MQTT message that Set Temp Changed
-              Serial.print(zoneSetTemp[i]);
-              Serial.print("F --> ");
-              Serial.print(sentval);
-              Serial.println("F");
-            }
-            zoneSetTemp[i] = sentval;
-          }
-        }
-        i++;
-      }
-    }
+    Serial.println(msg);
+  }
+  else if (strcmp(target, getCommand) == 0)
+  {
+    Serial.println("Processing GET command!");
+    // Publish Heating Status
+    publishHeatingStatus();
   }
   else
   {
-    Serial.println("!!!EMPTY!!!");
-    i = 0;
-
-    if (strcmp(target, getCommand) == 0)
+    Serial.println(msg);
+    while (i < 5)
     {
-      Serial.println("Processing GET command!");
-      if (command != NULL)
+      if (strcmp(target, zoneNames[i]) == 0)
       {
-        while (i < 5)
+        int sentval = atoi(msg);
+        Serial.println(sentval);
+        if (strcmp(command, enableCommand) == 0)
         {
-          if (strcmp(command, zoneNames[i]) == 0)
+          foundZone = true;
+          if (zoneHeatEnable[i] != (bool)sentval)
           {
-            char *topicString = strdup(statusTopic);
-            strcat(topicString, "/");
-            strcat(topicString, zoneNames[i]);
-            Serial.print("Topic: ");
-            Serial.println(topicString);
-            String rDoc = getRoomStatusJson(i);
-            const char *doc = rDoc.c_str();
-            Serial.print("Payload: ");
-            Serial.println(doc);
-            mqttClient.publish(topicString, 0, false, doc);
-            Serial.println("Publishing Status at QoS 0");
-            break;
+            // Send MQTT message that Enabled State Changed
+            Serial.print("Enable State Changed from ");
+            if (!zoneHeatEnable[i])
+            {
+              Serial.println("Disabled ---> Enabled");
+            }
+            else
+            {
+              Serial.println("Enabled ---> Disabled");
+            }
           }
-          i++;
+          zoneHeatEnable[i] = (bool)sentval;
+        }
+        else if (strcmp(command, setCommand) == 0)
+        {
+          if (zoneSetTemp[i] != sentval)
+          {
+            // Send MQTT message that Set Temp Changed
+            Serial.print(zoneSetTemp[i]);
+            Serial.print("F --> ");
+            Serial.print(sentval);
+            Serial.println("F");
+          }
+          zoneSetTemp[i] = sentval;
+        }
+        else if (strcmp(command, getCommand) == 0)
+        {
+          char *topicString = strdup(statusTopic);
+          strcat(topicString, "/");
+          strcat(topicString, zoneNames[i]);
+          Serial.print("Topic: ");
+          Serial.println(topicString);
+          String rDoc = getRoomStatusJson(i);
+          const char *doc = rDoc.c_str();
+          Serial.print("Payload: ");
+          Serial.println(doc);
+          mqttClient.publish(topicString, 0, false, doc);
+          Serial.println("Publishing Status at QoS 0");
         }
       }
-      else
-      {
-        // Publish Heating Status
-        publishHeatingStatus();
-      }
+      i++;
     }
   }
 
   Serial.println();
-  /*
-  Serial.print("  qos: ");
-  Serial.println(properties.qos);
-  Serial.print("  dup: ");
-  Serial.println(properties.dup);
-  Serial.print("  retain: ");
-  Serial.println(properties.retain);
-  Serial.print("  len: ");
-  Serial.println(len);
-  Serial.print("  index: ");
-  Serial.println(index);
-  Serial.print("  total: ");
-  Serial.println(total);
-  */
 }
 
 void onMqttPublish(const uint16_t &packetId)
@@ -470,15 +451,9 @@ void GetTemps()
 
     if ((zoneActualTemp[i] > 92) && (logDisplayCounter > 9))
     {
-      const char *warningText = "Over 92 degrees!!!";
-      //char *alarmMessage = strdup(zoneNames[i]);
-      char *alarmMessage = strdup(warningText);
-      // String aMsg = zoneNames[i] + warningText;
+      const char *warningMessage = "Overheating above 92F!!!";
 
-      //strcat(alarmMessage, warningText);
-      //strcat(alarmMessage, "Over 92 degrees!!!");
-      const char *msg = alarmMessage;
-      mqttClient.publish(alarmTopic, 0, false, alarmMessage);
+      publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
     }
   }
 }
@@ -502,8 +477,10 @@ void SetHeatControl()
 
     if ((!zoneHeatEnable[i] && zoneHeating[i]) || ((zoneActualTemp[i] > 90) && zoneHeating[i]))
     {
+      const char *warningMessage = "Unrequested Heating!!!";
       Serial.println("!!! ERROR !!!");
       // Should also send MQTT message to alert someone
+      publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
     }
     else
     {
@@ -518,7 +495,8 @@ void logHeatingStatus()
   for (int j = 0; j < 5; j++)
   {
     Serial.print(zoneNames[j]);
-    Serial.print(nameSpacing[j]);
+    // Serial.print(nameSpacing[j]);
+    Serial.print("   ");
     Serial.print(": ");
     Serial.print("    ");
     Serial.print("Current: ");
@@ -576,52 +554,52 @@ void displayHeatingStatus()
     display.setCursor(x, y);
     display.print(zoneNames[j]);
 
-      // Serial.println();
+    // Serial.println();
 
-      x += 35;
-      display.setCursor(x, y);
-      display.print(zoneActualTemp[j], 0);
-      display.print("F");
+    x += 35;
+    display.setCursor(x, y);
+    display.print(zoneActualTemp[j], 0);
+    display.print("F");
 
-      x += 15;
-      display.setCursor(x, y);
-      if (zoneHeatEnable[j])
+    x += 15;
+    display.setCursor(x, y);
+    if (zoneHeatEnable[j])
+    {
+      if (zoneHeating[j])
       {
-        if (zoneHeating[j])
+        // display.print("HEATING");
+        for (int k = 0; k < 9; k++)
         {
-          // display.print("HEATING");
-          for (int k = 0; k < 9; k++)
+          x += 5;
+          if (k == zoneHeatArrowCounter[j])
           {
-            x += 5;
-            if (k == zoneHeatArrowCounter[j])
-            {
-              display.setCursor(x, y);
-              display.print(">");
-            }
+            display.setCursor(x, y);
+            display.print(">");
           }
-          zoneHeatArrowCounter[j]++;
-          if (zoneHeatArrowCounter[j] > 8)
-          {
-            zoneHeatArrowCounter[j] = 0;
-          }
-
-          x += 10;
-          display.setCursor(x, y);
-          display.print(zoneSetTemp[j], 0);
-          display.print("F");
         }
-        else
+        zoneHeatArrowCounter[j]++;
+        if (zoneHeatArrowCounter[j] > 8)
         {
-          display.print("NOT HEATING");
+          zoneHeatArrowCounter[j] = 0;
         }
 
         x += 10;
         display.setCursor(x, y);
+        display.print(zoneSetTemp[j], 0);
+        display.print("F");
       }
       else
       {
-        // display.print("Disabled");
+        display.print("NOT HEATING");
       }
+
+      x += 10;
+      display.setCursor(x, y);
+    }
+    else
+    {
+      // display.print("Disabled");
+    }
     y += 10;
   }
   display.display();
@@ -701,40 +679,45 @@ void setup()
   mqttClient.setServer(MQTT_HOST, MQTT_PORT);
 
   connectToWifi();
+
+  Serial.print("Reading Temps.");
 }
 
 void loop()
 {
-  logDisplayCounter++;
-  GetTemps();
-  SetHeatControl();
-  displayHeatingStatus();
-  if (logDisplayCounter > 9)
+  if (logDisplayCounter == 0)
   {
-    Serial.println("");
-    Serial.println("");
-    logHeatingStatus();
     Serial.println("");
     Serial.print("Reading Temps");
-    logDisplayCounter = 0;
   }
-  // delay(1000);
-
-  bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
-  unsigned long rightNow = millis();
-  if (anyEnabled)
-  {
-    if (rightNow > lastStatusBroadcast + 60000)
+    logDisplayCounter++;
+    GetTemps();
+    SetHeatControl();
+    displayHeatingStatus();
+    if (logDisplayCounter > 9)
     {
-      publishHeatingStatus();
-      lastStatusBroadcast = millis();
+      Serial.println("");
+      Serial.println("");
+      logHeatingStatus();
+      logDisplayCounter = 0;
     }
-  }
-  else
-  {
-    lastStatusBroadcast = 0;
-  }
+    // delay(1000);
 
-  ledOn = !ledOn;
-  digitalWrite(LED_PIN, ledOn);
-}
+    bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
+    unsigned long rightNow = millis();
+    if (anyEnabled)
+    {
+      if (rightNow > lastStatusBroadcast + 60000)
+      {
+        publishHeatingStatus();
+        lastStatusBroadcast = millis();
+      }
+    }
+    else
+    {
+      lastStatusBroadcast = 0;
+    }
+
+    ledOn = !ledOn;
+    digitalWrite(LED_PIN, ledOn);
+  }
