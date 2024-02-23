@@ -73,6 +73,7 @@ float zoneActualTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
 int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeatEnable[] = {false, false, false, false, false};
 bool zoneHeating[] = {false, false, false, false, false};
+String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
 int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
 
 unsigned long lastStatusBroadcast = 0;
@@ -467,28 +468,63 @@ void SetHeatControl()
 
   for (int i = 0; i < 5; i++)
   {
-    if ((zoneActualTemp[i] <= zoneSetTemp[i]) && zoneHeatEnable[i] && (zoneActualTemp[i] < 90))
+    if (zoneActualTemp[i] < 90)
     {
-      if (zoneActualTemp[i] < zoneSetTemp[i])
-      {
-        zoneHeating[i] = true;
+
+      // Are we allowed to heat?
+      if (zoneHeatEnable[i])
+      {// Yes - Decide if we should heat.
+        // Cool enough to think about heating?
+        if ((zoneActualTemp[i] <= (zoneSetTemp[i] + 0.5)))
+        {// Yes - Decide whether to turn on heat.
+
+          // Cool enough to turn on heat?
+          if (zoneActualTemp[i] < (zoneSetTemp[i] - 0.5))
+          {// Yes - Heat it up!
+            zoneHeating[i] = true;
+            zoneHeatingMode[i] = "HEATING";
+          }
+          else
+          {// No - We're in the zone (+/- 0.5F). No change until upper or lower bound is reached.
+            // IDLE - if it is ON, leave it on i.e. still Heating
+            //        if it is OFF, leave it OFF i.e. cooling down from (zoneSetTemp[i] +1)
+            //zoneHeatingMode[i] = "IDLE";
+          }
+        }
+        else
+        {// No - Hot enough, stop heating.
+          zoneHeating[i] = false;
+          zoneHeatingMode[i] = "IDLE";
+        }
       }
+      else // NOT zoneHeatEnable[i]
+      {
+        if (zoneHeating[i])
+        {
+          const char *warningMessage = "Unrequested Heating!!!";
+          Serial.println("!!! ERROR !!!");
+          // Should also send MQTT message to alert someone
+          publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
+        }
+        zoneHeating[i] = false;
+        zoneHeatingMode[i] = "OFF";
+      }
+
+      //****************************************
+      // The ONLY place that heating gets written
+      //
+      digitalWrite(outPins[i], zoneHeating[i]);
+      //
+      // ***************************************
     }
     else
     {
-      zoneHeating[i] = false;
-    }
-
-    if ((!zoneHeatEnable[i] && zoneHeating[i]) || ((zoneActualTemp[i] > 90) && zoneHeating[i]))
-    {
-      const char *warningMessage = "Unrequested Heating!!!";
+      const char *warningMessage = "OVERHEATING";
       Serial.println("!!! ERROR !!!");
       // Should also send MQTT message to alert someone
       publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
-    }
-    else
-    {
-      digitalWrite(outPins[i], zoneHeating[i]);
+      zoneHeating[i] = false;
+      zoneHeatingMode[i] = "OFF";
     }
   }
 }
@@ -586,7 +622,6 @@ void displayHeatingStatus()
         {
           zoneHeatArrowCounter[j] = 0;
         }
-
       }
       else
       {
@@ -696,34 +731,34 @@ void loop()
     Serial.println("");
     Serial.print("Reading Temps");
   }
-    logDisplayCounter++;
-    GetTemps();
-    SetHeatControl();
-    displayHeatingStatus();
-    if (logDisplayCounter > 9)
-    {
-      Serial.println("");
-      Serial.println("");
-      logHeatingStatus();
-      logDisplayCounter = 0;
-    }
-    // delay(1000);
-
-    bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
-    unsigned long rightNow = millis();
-    if (anyEnabled)
-    {
-      if (rightNow > lastStatusBroadcast + 60000)
-      {
-        publishHeatingStatus();
-        lastStatusBroadcast = millis();
-      }
-    }
-    else
-    {
-      lastStatusBroadcast = 0;
-    }
-
-    ledOn = !ledOn;
-    digitalWrite(LED_PIN, ledOn);
+  logDisplayCounter++;
+  GetTemps();
+  SetHeatControl();
+  displayHeatingStatus();
+  if (logDisplayCounter > 9)
+  {
+    Serial.println("");
+    Serial.println("");
+    logHeatingStatus();
+    logDisplayCounter = 0;
   }
+  // delay(1000);
+
+  bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
+  unsigned long rightNow = millis();
+  if (anyEnabled)
+  {
+    if (rightNow > lastStatusBroadcast + 60000)
+    {
+      publishHeatingStatus();
+      lastStatusBroadcast = millis();
+    }
+  }
+  else
+  {
+    lastStatusBroadcast = 0;
+  }
+
+  ledOn = !ledOn;
+  digitalWrite(LED_PIN, ledOn);
+}
