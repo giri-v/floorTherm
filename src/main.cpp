@@ -42,6 +42,8 @@ float Ro = 10000.0;
 float adcMax = 4096;
 float Vs = 3.3;
 
+String hostname = "floortherm";
+
 bool ledOn = true;
 
 const char delim[2] = "/";
@@ -93,6 +95,8 @@ TimerHandle_t wifiReconnectTimer;
 void connectToWifi()
 {
   Serial.println("Connecting to Wi-Fi...");
+  WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
+  WiFi.setHostname(hostname.c_str());
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
@@ -583,22 +587,24 @@ void displayHeatingStatus()
           zoneHeatArrowCounter[j] = 0;
         }
 
-        x += 10;
-        display.setCursor(x, y);
-        display.print(zoneSetTemp[j], 0);
-        display.print("F");
       }
       else
       {
-        display.print("NOT HEATING");
+        x += 25;
+        display.print("IDLE");
       }
+      x += 10;
+      display.setCursor(x, y);
+      display.print(zoneSetTemp[j], 0);
+      display.print("F");
 
       x += 10;
       display.setCursor(x, y);
     }
     else
     {
-      // display.print("Disabled");
+      x += 40;
+      display.print("OFF");
     }
     y += 10;
   }
