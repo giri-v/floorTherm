@@ -1,7 +1,7 @@
-#define WIFI_SSID "vtap"
-#define WIFI_PASSWORD "things1250"
+
 
 #include <Arduino.h>
+#include <Preferences.h>
 #include <WiFi.h>
 #include <SPI.h>
 #include <Wire.h>
@@ -18,10 +18,9 @@ extern "C"
 
 #include <AsyncMQTT_ESP32.h>
 
-#define MQTT_HOST IPAddress(192, 168, 0, 13)
-// #define MQTT_HOST "broker.emqx.io" // Broker address
-#define MQTT_PORT 1883
+String hostname = "floortherm";
 
+// ********************* Display Parameters ************************
 #define LED_PIN 2
 
 #define SCREEN_WIDTH 128 /// OLED display width, in pixels
@@ -35,18 +34,19 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define I2C_SCL 22          /// ESP8266 NodeMCU SCL pin GPIO5 = D1
 #define SCREEN_ADDRESS 0x3C /// 0x3C for SSD1315 OLED
 
-float Rref = 10000.0;
-float Beta = 3894; // 3950.0;
-float To = 298.15;
-float Ro = 10000.0;
-float adcMax = 4096;
-float Vs = 3.3;
 
-String hostname = "floortherm";
 
-bool ledOn = true;
 
-const char delim[2] = "/";
+// ********************* WiFi Parameters ************************
+#define WIFI_SSID "vtap"
+#define WIFI_PASSWORD "things1250"
+
+// ********************* MQTT Parameters ************************
+#define MQTT_HOST IPAddress(192, 168, 0, 13)
+#define MQTT_PORT 1883
+
+AsyncMqttClient mqttClient;
+TimerHandle_t mqttReconnectTimer;
 
 // Published Topics
 const char *mainPubTopic = "floortherm/"; // Topic to publish
@@ -62,22 +62,6 @@ const char *SubTopic = "floortherm/#";
 const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
 
-// Zone Data
-const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
-const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
-const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
-int inPins[] = {32, 33, 34, 35, 36};
-int outPins[] = {16, 17, 18, 19, 23};
-int zoneSetTemp[] = {72, 72, 72, 72, 72};
-float zoneActualTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
-int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
-bool zoneHeatEnable[] = {false, false, false, false, false};
-bool zoneHeating[] = {false, false, false, false, false};
-String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
-int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
-
-unsigned long lastStatusBroadcast = 0;
-
 // Topic Commands
 const char *enableCommand = "enable";
 const char *enCommand = "en";
@@ -86,12 +70,83 @@ const char *setCommand = "set";
 const char *getCommand = "get";
 const char *statusReport = "status";
 
+
+
+TimerHandle_t wifiReconnectTimer;
+
+// ********************* App Parameters ************************
+Preferences preferences;
+
+// App Constants
+float Rref = 10000.0;
+float Beta = 3894; // 3950.0;
+float To = 298.15;
+float Ro = 10000.0;
+float adcMax = 4096;
+float Vs = 3.3;
+
+// Core System Parameters
+int zoneSetTemp[] = {72, 72, 72, 72, 72};
+bool zoneHeatEnable[] = {false, false, false, false, false};
+
+
+
+// Zone Data
+const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
+const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
+const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
+int inPins[] = {32, 33, 34, 35, 36};
+int outPins[] = {16, 17, 18, 19, 23};
+
+float zoneActualTemp[] = {72.0, 72.0, 72.0, 72.0, 72.0};
+int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
+
+bool zoneHeating[] = {false, false, false, false, false};
+String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
+int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
+
+unsigned long lastStatusBroadcast = 0;
+
+bool ledOn = true;
+
+const char delim[2] = "/";
+
 const int docCapacity = JSON_OBJECT_SIZE(5) + 5 * JSON_OBJECT_SIZE(4);
 const int roomDocCapacity = JSON_OBJECT_SIZE(4);
 int logDisplayCounter = 0;
-AsyncMqttClient mqttClient;
-TimerHandle_t mqttReconnectTimer;
-TimerHandle_t wifiReconnectTimer;
+
+// ********************* Debug Parameters ************************
+String methodName = "ACclimate";
+
+void loadPrefs()
+{
+  zoneSetTemp[0] = preferences.getInt("Z0SetTemp");
+  zoneSetTemp[1] = preferences.getInt("Z1SetTemp");
+  zoneSetTemp[2] = preferences.getInt("Z2SetTemp");
+  zoneSetTemp[3] = preferences.getInt("Z3SetTemp");
+  zoneSetTemp[4] = preferences.getInt("Z4SetTemp");
+
+  zoneHeatEnable[0] = preferences.getBool("Z0Enabled");
+  zoneHeatEnable[1] = preferences.getBool("Z1Enabled");
+  zoneHeatEnable[2] = preferences.getBool("Z2Enabled");
+  zoneHeatEnable[3] = preferences.getBool("Z3Enabled");
+  zoneHeatEnable[4] = preferences.getBool("Z4Enabled");
+}
+
+void storePrefs()
+{
+  preferences.putInt("Z0SetTemp", zoneSetTemp[0]);
+  preferences.putInt("Z1SetTemp", zoneSetTemp[1]);
+  preferences.putInt("Z2SetTemp", zoneSetTemp[2]);
+  preferences.putInt("Z3SetTemp", zoneSetTemp[3]);
+  preferences.putInt("Z4SetTemp", zoneSetTemp[4]);
+
+  preferences.putBool("Z0Enabled", zoneHeatEnable[0]);
+  preferences.putBool("Z1Enabled", zoneHeatEnable[1]);
+  preferences.putBool("Z2Enabled", zoneHeatEnable[2]);
+  preferences.putBool("Z3Enabled", zoneHeatEnable[3]);
+  preferences.putBool("Z4Enabled", zoneHeatEnable[4]);
+}
 
 void connectToWifi()
 {
@@ -383,6 +438,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
             }
           }
           zoneHeatEnable[i] = (bool)sentval;
+          storePrefs();
         }
         else if (strcmp(command, setCommand) == 0)
         {
@@ -395,6 +451,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
             Serial.println("F");
           }
           zoneSetTemp[i] = sentval;
+          storePrefs();
         }
         else if (strcmp(command, getCommand) == 0)
         {
@@ -680,10 +737,8 @@ void setupDisplay()
 void setup()
 {
 
-  for (int i = 0; i < 5; i++)
-    pinMode(outPins[i], OUTPUT);
+  preferences.begin("ACclimate", false);
 
-  pinMode(LED_PIN, OUTPUT);
 
   Serial.begin(115200);
 
@@ -692,11 +747,16 @@ void setup()
 
   delay(500);
 
-  Serial.print("\nStarting FullyFeature_ESP32 on ");
-  Serial.println(ARDUINO_BOARD);
-  Serial.println(ASYNC_MQTT_ESP32_VERSION);
+
 
   Serial.println("FloorTherm starting...");
+
+  for (int i = 0; i < 5; i++)
+    pinMode(outPins[i], OUTPUT);
+
+  pinMode(LED_PIN, OUTPUT);
+
+  loadPrefs();
 
   setupDisplay();
 
