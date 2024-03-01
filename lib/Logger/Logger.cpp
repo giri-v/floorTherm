@@ -1,233 +1,277 @@
-// =============================================================================
-//
-// Copyright (c) 2013-2016 Christopher Baker <http://christopherbaker.net>
-//
-// Permission is hereby granted, free of charge, to any person obtaining a copy
-// of this software and associated documentation files (the "Software"), to deal
-// in the Software without restriction, including without limitation the rights
-// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-// copies of the Software, and to permit persons to whom the Software is
-// furnished to do so, subject to the following conditions:
-//
-// The above copyright notice and this permission notice shall be included in
-// all copies or substantial portions of the Software.
-//
-// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-// THE SOFTWARE.
-//
-// =============================================================================
+/*
+    _   ___ ___  _   _ ___ _  _  ___  _    ___   ___
+   /_\ | _ \   \| | | |_ _| \| |/ _ \| |  / _ \ / __|
+  / _ \|   / |) | |_| || || .` | (_) | |_| (_) | (_ |
+ /_/ \_\_|_\___/ \___/|___|_|\_|\___/|____\___/ \___|
+
+  Log library for Arduino
+  version 1.1.1
+  https://github.com/thijse/Arduino-Log
+
+Licensed under the MIT License <http://opensource.org/licenses/MIT>.
+
+Permission is hereby  granted, free of charge, to any  person obtaining a copy
+of this software and associated  documentation files (the "Software"), to deal
+in the Software  without restriction, including without  limitation the rights
+to  use, copy,  modify, merge,  publish, distribute,  sublicense, and/or  sell
+copies  of  the Software,  and  to  permit persons  to  whom  the Software  is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE  IS PROVIDED "AS  IS", WITHOUT WARRANTY  OF ANY KIND,  EXPRESS OR
+IMPLIED,  INCLUDING BUT  NOT  LIMITED TO  THE  WARRANTIES OF  MERCHANTABILITY,
+FITNESS FOR  A PARTICULAR PURPOSE AND  NONINFRINGEMENT. IN NO EVENT  SHALL THE
+AUTHORS  OR COPYRIGHT  HOLDERS  BE  LIABLE FOR  ANY  CLAIM,  DAMAGES OR  OTHER
+LIABILITY, WHETHER IN AN ACTION OF  CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE  OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+*/
 
 #include "Logger.h"
-
-#if defined(ARDUINO_ARCH_AVR)
-#include <avr/pgmspace.h>
+#define __x86_64__
+void Logging::begin(int level, Print *logOutput, bool showLevel)
+{
+#ifndef DISABLE_LOGGING
+    setLevel(level);
+    setShowLevel(showLevel);
+    _logOutput = logOutput;
 #endif
+}
 
-// There appears to be an incompatibility with ESP8266 2.3.0.
-#if defined(ESP8266)
-#define MEM_TYPE
+void Logging::setLevel(int level)
+{
+#ifndef DISABLE_LOGGING
+    _level = constrain(level, LOG_LEVEL_SILENT, LOG_LEVEL_VERBOSE);
+#endif
+}
+
+int Logging::getLevel() const
+{
+#ifndef DISABLE_LOGGING
+    return _level;
 #else
-#define MEM_TYPE PROGMEM
+    return 0;
 #endif
+}
 
-const char LEVEL_VERBOSE[] MEM_TYPE = "VERBOSE";
-const char LEVEL_NOTICE[] MEM_TYPE = "NOTICE";
-const char LEVEL_WARNING[] MEM_TYPE = "WARNING";
-const char LEVEL_ERROR[] MEM_TYPE = "ERROR";
-const char LEVEL_FATAL[] MEM_TYPE = "FATAL";
-const char LEVEL_SILENT[] MEM_TYPE = "SILENT";
+void Logging::setShowLevel(bool showLevel)
+{
+#ifndef DISABLE_LOGGING
+    _showLevel = showLevel;
+#endif
+}
 
-const char *const LOG_LEVEL_STRINGS[] MEM_TYPE =
+bool Logging::getShowLevel() const
+{
+#ifndef DISABLE_LOGGING
+    return _showLevel;
+#else
+    return false;
+#endif
+}
+
+void Logging::setPrefix(printfunction f)
+{
+#ifndef DISABLE_LOGGING
+    _prefix = f;
+#endif
+}
+
+void Logging::clearPrefix()
+{
+#ifndef DISABLE_LOGGING
+    _prefix = nullptr;
+#endif
+}
+
+void Logging::setSuffix(printfunction f)
+{
+#ifndef DISABLE_LOGGING
+    _suffix = f;
+#endif
+}
+
+void Logging::clearSuffix()
+{
+#ifndef DISABLE_LOGGING
+    _suffix = nullptr;
+#endif
+}
+
+void Logging::print(const __FlashStringHelper *format, va_list args)
+{
+#ifndef DISABLE_LOGGING
+    PGM_P p = reinterpret_cast<PGM_P>(format);
+// This copy is only necessary on some architectures (x86) to change a passed
+// array in to a va_list.
+#ifdef __x86_64__
+    va_list args_copy;
+    va_copy(args_copy, args);
+#endif
+    char c = pgm_read_byte(p++);
+    for (; c != 0; c = pgm_read_byte(p++))
     {
-        LEVEL_VERBOSE,
-        LEVEL_NOTICE,
-        LEVEL_WARNING,
-        LEVEL_ERROR,
-        LEVEL_FATAL,
-        LEVEL_SILENT};
-
-Logger::Logger() : _level(WARNING),
-                   _loggerOutputFunction(0)
-{
-}
-
-void Logger::setLogLevel(Level level)
-{
-    getInstance()._level = level;
-}
-
-Logger::Level Logger::getLogLevel()
-{
-    return getInstance()._level;
-}
-
-void Logger::verbose(const char *message)
-{
-    log(VERBOSE, message);
-}
-
-void Logger::verbose(const String message)
-{
-    log(VERBOSE, message);
-}
-
-void Logger::notice(const char *message)
-{
-    log(NOTICE, message);
-}
-
-void Logger::notice(const String message)
-{
-    log(NOTICE, message);
-}
-
-void Logger::warning(const char *message)
-{
-    log(WARNING, message);
-}
-
-void Logger::warning(const String message)
-{
-    log(WARNING, message);
-}
-
-void Logger::error(const char *message)
-{
-    log(ERROR, message);
-}
-
-void Logger::error(const String message)
-{
-    log(ERROR, message);
-}
-
-void Logger::fatal(const char *message)
-{
-    log(FATAL, message);
-}
-
-void Logger::fatal(const String message)
-{
-    log(FATAL, message);
-}
-
-void Logger::verbose(const char *module, const char *message)
-{
-    log(VERBOSE, module, message);
-}
-
-void Logger::verbose(const String module, const String message)
-{
-    log(VERBOSE, module, message);
-}
-
-void Logger::notice(const char *module, const char *message)
-{
-    log(NOTICE, module, message);
-}
-
-void Logger::notice(const String module, const String message)
-{
-    log(NOTICE, module, message);
-}
-
-void Logger::warning(const char *module, const char *message)
-{
-    log(WARNING, module, message);
-}
-
-void Logger::warning(const String module, const String message)
-{
-    log(WARNING, module, message);
-}
-
-void Logger::error(const char *module, const char *message)
-{
-    log(ERROR, module, message);
-}
-
-void Logger::error(const String module, const String message)
-{
-    log(ERROR, module, message);
-}
-
-void Logger::fatal(const char *module, const char *message)
-{
-    log(FATAL, module, message);
-}
-
-void Logger::fatal(const String module, const String message)
-{
-    log(FATAL, module, message);
-}
-
-void Logger::log(Level level, const char *message)
-{
-    log(level, "", message);
-}
-
-void Logger::log(Level level, const String message)
-{
-    log(level, "", message);
-}
-
-void Logger::log(Level level, const char *module, const char *message)
-{
-    if (level >= getLogLevel())
-    {
-        if (getInstance()._loggerOutputFunction)
+        if (c == '%')
         {
-            getInstance()._loggerOutputFunction(level, module, message);
+            c = pgm_read_byte(p++);
+#ifdef __x86_64__
+            printFormat(c, &args_copy);
+#else
+            printFormat(c, &args);
+#endif
         }
         else
         {
-            getInstance().defaultLog(level, module, message);
+            _logOutput->print(c);
         }
     }
+#ifdef __x86_64__
+    va_end(args_copy);
+#endif
+#endif
 }
 
-void Logger::log(Level level, const String module, const String message)
+void Logging::print(const char *format, va_list args)
 {
-    log(level, module.c_str(), message.c_str());
-}
-
-void Logger::setOutputFunction(LoggerOutputFunction loggerOutputFunction)
-{
-    getInstance()._loggerOutputFunction = loggerOutputFunction;
-}
-
-Logger &Logger::getInstance()
-{
-    static Logger logger;
-    return logger;
-}
-
-const char *Logger::asString(Level level)
-{
-    return LOG_LEVEL_STRINGS[level];
-}
-
-void Logger::defaultLog(Level level, const char *module, const char *message)
-{
-    Serial.print(F("["));
-
-    Serial.print(asString(level));
-
-    Serial.print(F("] "));
-
-    if (strlen(module) > 0)
+#ifndef DISABLE_LOGGING
+// This copy is only necessary on some architectures (x86) to change a passed
+// array in to a va_list.
+#ifdef __x86_64__
+    va_list args_copy;
+    va_copy(args_copy, args);
+#endif
+    for (; *format != 0; ++format)
     {
-        Serial.print(F(": "));
-        Serial.print(module);
-        Serial.print(F(" "));
+        if (*format == '%')
+        {
+            ++format;
+#ifdef __x86_64__
+            printFormat(*format, &args_copy);
+#else
+            printFormat(*format, &args);
+#endif
+        }
+        else
+        {
+            _logOutput->print(*format);
+        }
     }
-
-    Serial.println(message);
+#ifdef __x86_64__
+    va_end(args_copy);
+#endif
+#endif
 }
 
-// typedef Logger_<SerialOutput> SerialLogger;
+void Logging::printFormat(const char format, va_list *args)
+{
+#ifndef DISABLE_LOGGING
+    if (format == '\0')
+        return;
+    if (format == '%')
+    {
+        _logOutput->print(format);
+    }
+    else if (format == 's')
+    {
+        register char *s = va_arg(*args, char *);
+        _logOutput->print(s);
+    }
+    else if (format == 'S')
+    {
+        register __FlashStringHelper *s = va_arg(*args, __FlashStringHelper *);
+        _logOutput->print(s);
+    }
+    else if (format == 'd' || format == 'i')
+    {
+        _logOutput->print(va_arg(*args, int), DEC);
+    }
+    else if (format == 'D' || format == 'F')
+    {
+        _logOutput->print(va_arg(*args, double));
+    }
+    else if (format == 'x')
+    {
+        _logOutput->print(va_arg(*args, int), HEX);
+    }
+    else if (format == 'X')
+    {
+        _logOutput->print("0x");
+        //_logOutput->print(va_arg(*args, int), HEX);
+        register uint16_t h = (uint16_t)va_arg(*args, int);
+        if (h < 0xFFF)
+            _logOutput->print('0');
+        if (h < 0xFF)
+            _logOutput->print('0');
+        if (h < 0xF)
+            _logOutput->print('0');
+        _logOutput->print(h, HEX);
+    }
+    else if (format == 'p')
+    {
+        register Printable *obj = (Printable *)va_arg(*args, int);
+        _logOutput->print(*obj);
+    }
+    else if (format == 'b')
+    {
+        _logOutput->print(va_arg(*args, int), BIN);
+    }
+    else if (format == 'B')
+    {
+        _logOutput->print("0b");
+        _logOutput->print(va_arg(*args, int), BIN);
+    }
+    else if (format == 'l')
+    {
+        _logOutput->print(va_arg(*args, long), DEC);
+    }
+    else if (format == 'u')
+    {
+        _logOutput->print(va_arg(*args, unsigned long), DEC);
+    }
+    else if (format == 'c')
+    {
+        _logOutput->print((char)va_arg(*args, int));
+    }
+    else if (format == 'C')
+    {
+        register char c = (char)va_arg(*args, int);
+        if (c >= 0x20 && c < 0x7F)
+        {
+            _logOutput->print(c);
+        }
+        else
+        {
+            _logOutput->print("0x");
+            if (c < 0xF)
+                _logOutput->print('0');
+            _logOutput->print(c, HEX);
+        }
+    }
+    else if (format == 't')
+    {
+        if (va_arg(*args, int) == 1)
+        {
+            _logOutput->print("T");
+        }
+        else
+        {
+            _logOutput->print("F");
+        }
+    }
+    else if (format == 'T')
+    {
+        if (va_arg(*args, int) == 1)
+        {
+            _logOutput->print(F("true"));
+        }
+        else
+        {
+            _logOutput->print(F("false"));
+        }
+    }
+#endif
+}
+
+Logging Log = Logging();

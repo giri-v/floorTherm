@@ -37,9 +37,6 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 #define I2C_SCL 22          /// ESP8266 NodeMCU SCL pin GPIO5 = D1
 #define SCREEN_ADDRESS 0x3C /// 0x3C for SSD1315 OLED
 
-
-
-
 // ********************* WiFi Parameters ************************
 #define WIFI_SSID "vtap"
 #define WIFI_PASSWORD "things1250"
@@ -71,6 +68,7 @@ const char *alarmTopic = "floortherm/alarm";
 const char *SubTopic = "floortherm/#";
 const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
+const char *getStatusTopic = "floortherm/get";
 
 // Topic Commands
 const char *enableCommand = "enable";
@@ -80,8 +78,8 @@ const char *setCommand = "set";
 const char *getCommand = "get";
 const char *statusReport = "status";
 
-
-
+char tempTopics[5][18];
+char enableTopics[5][21];
 
 // ********************* App Parameters ************************
 Preferences preferences;
@@ -97,8 +95,6 @@ float Vs = 3.3;
 // Core System Parameters
 int zoneSetTemp[] = {72, 72, 72, 72, 72};
 bool zoneHeatEnable[] = {false, false, false, false, false};
-
-
 
 // Zone Data
 const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
@@ -163,7 +159,6 @@ void printTimestamp(Print *_logOutput, int x)
   _logOutput->print(": ");
 }
 
-
 void loadPrefs()
 {
   zoneSetTemp[0] = preferences.getInt("Z0SetTemp");
@@ -192,6 +187,15 @@ void storePrefs()
   preferences.putBool("Z2Enabled", zoneHeatEnable[2]);
   preferences.putBool("Z3Enabled", zoneHeatEnable[3]);
   preferences.putBool("Z4Enabled", zoneHeatEnable[4]);
+}
+
+void buildCommandTopics()
+{
+  for (int i = 0; i < 5;i++)
+  {
+    sprintf(tempTopics[i], "floortherm/%s/set", zoneNames[i]);
+    sprintf(enableTopics[i], "floortherm/%s/enable", zoneNames[i]);
+  }
 }
 
 void connectToWifi()
@@ -439,6 +443,46 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   String recTopic = String(topic);
   bool foundZone = false;
 
+  logMQTTMessage(topic, len, msg);
+
+  if (strcmp(topic, getStatusTopic) == 0) // This is a request for status
+  {
+    Serial.println("Processing GET command!");
+    // Publish Heating Status
+    publishHeatingStatus();
+  }
+  else
+  {
+    for (int i = 0; i < 5;i++)
+    {
+      //String 
+      if (strcmp(topic, tempTopics[i])
+      {
+        int sentval = atoi(msg);
+        if (zoneSetTemp[i] != sentval)
+        {
+          // Send MQTT message that Set Temp Changed
+          Log.infoln("%s Set Temp changed: %dF ---> %dF", zoneNames[i], zoneSetTemp[i], sentval);
+          publishHeatingStatus();
+          zoneSetTemp[i] = sentval;
+          storePrefs();
+        }
+      }
+      else if (strcmp(topic, enableTopics[i])
+      {
+        int sentval = atoi(msg);
+        if (zoneHeatEnable[i] != (bool)sentval)
+        {
+          // Send MQTT message that Enabled State Changed
+          Log.infoln("%s Enable State Changed from %s", zoneHeatEnable[i] ? "Disabled ---> Enabled" : "Enabled ---> Disabled");
+          zoneHeatEnable[i] = (bool)sentval;
+          storePrefs();
+        }
+      }
+    }
+  }
+
+/*
   Serial.print("Received");
   Serial.print("  topic: ");
   Serial.println(topic);
@@ -562,6 +606,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   }
 
   Serial.println();
+  */
 }
 
 void onMqttPublish(const uint16_t &packetId)
@@ -619,26 +664,26 @@ void SetHeatControl()
 
       // Are we allowed to heat?
       if (zoneHeatEnable[i])
-      {// Yes - Decide if we should heat.
+      { // Yes - Decide if we should heat.
         // Cool enough to think about heating?
         if ((zoneActualTemp[i] <= (zoneSetTemp[i] + 0.5)))
-        {// Yes - Decide whether to turn on heat.
+        { // Yes - Decide whether to turn on heat.
 
           // Cool enough to turn on heat?
           if (zoneActualTemp[i] < (zoneSetTemp[i] - 0.5))
-          {// Yes - Heat it up!
+          { // Yes - Heat it up!
             zoneHeating[i] = true;
             zoneHeatingMode[i] = "HEATING";
           }
           else
-          {// No - We're in the zone (+/- 0.5F). No change until upper or lower bound is reached.
+          { // No - We're in the zone (+/- 0.5F). No change until upper or lower bound is reached.
             // IDLE - if it is ON, leave it on i.e. still Heating
             //        if it is OFF, leave it OFF i.e. cooling down from (zoneSetTemp[i] +1)
-            //zoneHeatingMode[i] = "IDLE";
+            // zoneHeatingMode[i] = "IDLE";
           }
         }
         else
-        {// No - Hot enough, stop heating.
+        { // No - Hot enough, stop heating.
           zoneHeating[i] = false;
           zoneHeatingMode[i] = "IDLE";
         }
@@ -829,7 +874,6 @@ void setup()
 
   preferences.begin("ACclimate", false);
 
-
   Serial.begin(115200);
 
   while (!Serial && millis() < 5000)
@@ -847,6 +891,8 @@ void setup()
     pinMode(outPins[i], OUTPUT);
 
   pinMode(LED_PIN, OUTPUT);
+
+  buildCommandTopics();
 
   loadPrefs();
 
