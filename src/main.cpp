@@ -1,8 +1,11 @@
 
 
 #include <Arduino.h>
+#include <Logger.h>
+#define LOG_LEVEL 4
 #include <Preferences.h>
 #include <WiFi.h>
+#include <time.h>
 #include <SPI.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
@@ -40,6 +43,13 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 // ********************* WiFi Parameters ************************
 #define WIFI_SSID "vtap"
 #define WIFI_PASSWORD "things1250"
+TimerHandle_t wifiReconnectTimer;
+
+// ********** Time/NTP Parameters **********
+const char *ntpServer = "time.venkat.com";
+const long gmtOffset_sec = 0;
+const int daylightOffset_sec = 3600;
+// struct tm timeinfo;
 
 // ********************* MQTT Parameters ************************
 #define MQTT_HOST IPAddress(192, 168, 0, 13)
@@ -72,7 +82,6 @@ const char *statusReport = "status";
 
 
 
-TimerHandle_t wifiReconnectTimer;
 
 // ********************* App Parameters ************************
 Preferences preferences;
@@ -116,7 +125,44 @@ const int roomDocCapacity = JSON_OBJECT_SIZE(4);
 int logDisplayCounter = 0;
 
 // ********************* Debug Parameters ************************
-String methodName = "ACclimate";
+String methodName = "FloorTherm";
+
+bool isNullorEmpty(char *str)
+{
+  if ((str == NULL) || (str[0] == '\0'))
+    return true;
+  else
+    return false;
+}
+
+bool isNullorEmpty(String str)
+{
+  return isNullorEmpty(str.c_str());
+}
+
+void printTimestamp(Print *_logOutput, int x)
+{
+  char c[20];
+  time_t rawtime;
+  struct tm *timeinfo;
+  time(&rawtime);
+  timeinfo = localtime(&rawtime);
+  char tim[20];
+
+  if (timeinfo->tm_year == 70)
+  {
+    sprintf(c, "%10lu ", millis());
+  }
+  else
+  {
+    strftime(c, 20, "%Y%m%d %H:%M:%S", timeinfo);
+  }
+  _logOutput->print(c);
+  _logOutput->print(": ");
+  _logOutput->print(methodName);
+  _logOutput->print(": ");
+}
+
 
 void loadPrefs()
 {
@@ -164,6 +210,9 @@ void connectToMqtt()
 
 void WiFiEvent(WiFiEvent_t event)
 {
+  methodName = "WiFiEvent(WiFiEvent_t event)";
+  Log.verboseln("Entering...");
+
   switch (event)
   {
 #if USING_CORE_ESP32_CORE_V200_PLUS
@@ -182,9 +231,19 @@ void WiFiEvent(WiFiEvent_t event)
 
   case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
   case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-    Serial.println("WiFi connected");
-    Serial.print("IP address: ");
-    Serial.println(WiFi.localIP());
+    Log.infoln("Connected to Wi-Fi. IP address: %p", WiFi.localIP());
+    Log.infoln("Connecting to NTP Server...");
+    configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+    Log.infoln("Connected to NTP Server!");
+    time_t rawtime;
+    struct tm *timeinfo;
+    time(&rawtime);
+    timeinfo = localtime(&rawtime);
+    char tim[20];
+    strftime(tim, 20, "%d/%m/%Y %H:%M:%S", timeinfo);
+    Log.infoln("Local Time: %s", tim);
+
+    Log.infoln("Connecting to MQTT Broker...");
     connectToMqtt();
     break;
 
@@ -193,8 +252,11 @@ void WiFiEvent(WiFiEvent_t event)
     break;
 
   case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-    Serial.println("WiFi lost connection");
+    Log.infoln("Disconnected from Wi-Fi. (Lost connection to WiFi)");
+    Log.infoln("Stop mqttReconnectTimer");
+
     xTimerStop(mqttReconnectTimer, 0); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
+    Log.infoln("Reconnecting to WiFi...");
     xTimerStart(wifiReconnectTimer, 0);
     break;
 #else
@@ -216,6 +278,8 @@ void WiFiEvent(WiFiEvent_t event)
   default:
     break;
   }
+
+  Log.verboseln("Exiting...");
 }
 
 void printSeparationLine()
@@ -225,58 +289,58 @@ void printSeparationLine()
 
 void onMqttConnect(bool sessionPresent)
 {
-  Serial.print("Connected to MQTT broker: ");
-  Serial.print(MQTT_HOST);
-  Serial.print(", port: ");
-  Serial.println(MQTT_PORT);
-  Serial.print("PubTopic: ");
-  Serial.println(aliveTopic);
-  Serial.print("SubTopic: ");
-  Serial.println(SubTopic);
+  methodName = "onMqttConnect(bool sessionPresent)";
+  Log.verboseln("Entering...");
 
-  printSeparationLine();
-  Serial.print("Session present: ");
-  Serial.println(sessionPresent);
+  Log.infoln("Connected to MQTT broker: %p , port: %d", MQTT_HOST, MQTT_PORT);
+  Log.infoln("PubTopic:  %s", mainPubTopic);
+
+  // printSeparationLine();
+  Log.infoln("Session present: %T", sessionPresent);
 
   uint16_t packetIdSub = mqttClient.subscribe(SubTopic, 2);
-  Serial.print("Subscribing at QoS 2, packetId: ");
-  Serial.println(packetIdSub);
+  Log.infoln("Subscribing at QoS 2, packetId: %u", packetIdSub);
 
-  mqttClient.publish(aliveTopic, 0, true, "1");
-  Serial.println("Publishing at QoS 0");
+  mqttClient.publish(aliveTopic, 1, false, "1");
+  Log.infoln("Publishing at QoS 0");
 
-  mqttClient.setWill(willTopic, 0, true, "1");
-  Serial.println("Set Last Will and Testament message.");
+  mqttClient.setWill(willTopic, 1, true, "1");
+  Log.infoln("Set Last Will and Testament message.");
 
-  printSeparationLine();
+  // printSeparationLine();
+
+  Log.verboseln("Exiting...");
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
+  methodName = "onMqttConnect(bool sessionPresent)";
+  Log.verboseln("Entering...");
+
   (void)reason;
 
-  Serial.println("Disconnected from MQTT.");
+  Log.warningln("Disconnected from MQTT.");
 
   if (WiFi.isConnected())
   {
+    Log.infoln("Reconnecting to MQTT broker.");
     xTimerStart(mqttReconnectTimer, 0);
   }
 }
 
 void onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)
 {
-  Serial.println("Subscribe acknowledged.");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
-  Serial.print("  qos: ");
-  Serial.println(qos);
+  methodName = "onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)";
+
+  Log.infoln("Subscribe acknowledged.");
+  Log.infoln("  packetId: %u    qos:  %u", packetId, qos);
 }
 
 void onMqttUnsubscribe(const uint16_t &packetId)
 {
-  Serial.println("Unsubscribe acknowledged.");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
+  methodName = "onMqttUnsubscribe(const uint16_t &packetId)";
+
+  Log.infoln("Unsubscribe acknowledged.  packetId: %u", packetId);
 }
 
 void publishZoneAlarmMessage(char *zoneName, char *message)
@@ -292,8 +356,24 @@ void publishZoneAlarmMessage(char *zoneName, char *message)
   mqttClient.publish(topic, 0, false, alarmMessage);
 }
 
+void logMQTTMessage(char *topic, int len, char *payload)
+{
+  methodName = "logMQTTMessage(char *topic, int len, char *payload)";
+  Log.infoln("Topic: %s", topic);
+
+  Log.infoln("Payload Length: %d", len);
+
+  if (!isNullorEmpty(payload))
+  {
+    Log.infoln("Payload: ");
+    Log.infoln(payload);
+  }
+}
+
 String getRoomStatusJson(int i)
 {
+  methodName = "getRoomStatusJson()";
+  Log.verboseln("Entering...");
 
   StaticJsonDocument<roomDocCapacity> doc;
   String payload;
@@ -303,12 +383,17 @@ String getRoomStatusJson(int i)
   doc["SetTemp"] = zoneSetTemp[i];
   doc["Heating"] = zoneHeating[i];
 
+  Log.infoln("Serializing Status JSON");
   serializeJson(doc, payload);
+
+  Log.verboseln("Exiting...");
   return payload;
 }
 
 String getStatusJson()
 {
+  methodName = "getStatusJson()";
+  Log.verboseln("Entering...");
 
   StaticJsonDocument<docCapacity> doc;
   String payload;
@@ -321,21 +406,25 @@ String getStatusJson()
     doc[zoneNames[i]]["Heating"] = zoneHeating[i];
   }
 
+  Log.infoln("Serializing Status JSON");
   serializeJson(doc, payload);
+
+  Log.verboseln("Exiting...");
   return payload;
 }
 
 void publishHeatingStatus()
 {
+  methodName = "publishHeatingStatus()";
+  Log.verboseln("Entering...");
+
   // Publish Status
   String oDoc = getStatusJson();
   const char *doc = oDoc.c_str();
-  Serial.print("Topic: ");
-  Serial.println(statusTopic);
-  Serial.print("Payload: ");
-  Serial.println(doc);
+  logMQTTMessage((char *)statusTopic, strlen(doc), (char *)doc);
+  Log.infoln("Publishing Status at QoS 0");
   mqttClient.publish(statusTopic, 0, false, doc);
-  Serial.println("Publishing Status at QoS 0");
+  Log.verboseln("Exiting...");
 }
 
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
@@ -736,6 +825,7 @@ void setupDisplay()
 
 void setup()
 {
+  methodName = "setup()";
 
   preferences.begin("ACclimate", false);
 
@@ -747,9 +837,11 @@ void setup()
 
   delay(500);
 
+  Log.begin(LOG_LEVEL, &Serial);
+  Log.setPrefix(printTimestamp);
+  Log.setShowLevel(false);
 
-
-  Serial.println("FloorTherm starting...");
+  Log.infoln("FloorTherm starting...");
 
   for (int i = 0; i < 5; i++)
     pinMode(outPins[i], OUTPUT);
