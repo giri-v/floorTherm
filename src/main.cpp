@@ -191,7 +191,7 @@ void loadPrefs()
   methodName = "loadPrefs()";
   Log.verboseln("Entering...");
 
-  bool doesExist = preferences.isKey("myTestKey");
+  bool doesExist = preferences.isKey("Z0SetTemp");
 
   if (doesExist)
   {
@@ -404,7 +404,7 @@ void onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)
 {
   String oldMethodName = methodName;
   methodName = "onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)";
-  //methodName = __PRETTY_FUNCTION__;
+  // methodName = __PRETTY_FUNCTION__;
 
   Log.infoln("Subscribe acknowledged.");
   // Log.infoln("  packetId: %u    qos:  %u", packetId, qos);
@@ -736,54 +736,23 @@ void logHeatingStatus()
 {
   String oldMethodName = methodName;
   methodName = "logHeatingStatus()";
-  //Log.verboseln("Entering...");
+  // Log.verboseln("Entering...");
+  String statusMessage = "Status:\n";
 
-  Log.info("Status:");
   for (int j = 0; j < 5; j++)
   {
-    Log.info(CR);
-    Log.info(zoneNames[j]);
-    // Log.info(nameSpacing[j]);
-    Log.info("   ");
-    Log.info(": ");
-    Log.info("    ");
-    Log.info("Current: ");
-    // Log.info(zoneActualTemp[j]);
-    Log.info("F");
-    Log.info("    ");
-    if (zoneHeatEnable[j])
-    {
-      Log.info("Enabled ");
-      Log.info("    ");
-      Log.info("Target: ");
-      // Log.info(zoneSetTemp[j]);
-      Log.info("F");
-      Log.info("    ");
-
-      if (zoneHeating[j])
-      {
-        Log.info("HEATING");
-      }
-      else
-      {
-        Log.info("NOT HEATING");
-      }
-    }
-    else
-    {
-      Log.info("Disabled");
-    }
-
+    String err = "";
     if ((!zoneHeatEnable[j] && zoneHeating[j]) || ((zoneActualTemp[j] > 90) && zoneHeating[j]))
-    {
-      Log.info("!!! ERROR !!!");
-    }
-    else
-    {
-      Log.info("");
-    }
+      err = "!!! ERROR !!!";
+
+    String heating = "IDLE";
+    if (zoneHeating[j])
+      heating = "HEATING";
+
+    Log.infoln("%s: Enabled: %T     Current: %F     Target: %i     Heating: %s     %s", zoneNames[j], zoneActualTemp[j], zoneSetTemp[j], heating.c_str(), err.c_str());
+
   }
-  // Log.info();
+
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
 }
@@ -968,17 +937,12 @@ void loop()
 
   bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
   unsigned long rightNow = millis();
-  if (anyEnabled)
+
+  if (rightNow > lastStatusBroadcast + 60000)
   {
-    if (rightNow > lastStatusBroadcast + 60000)
-    {
-      publishHeatingStatus();
-      lastStatusBroadcast = millis();
-    }
-  }
-  else
-  {
-    lastStatusBroadcast = 0;
+    publishHeatingStatus();
+    logHeatingStatus();
+    lastStatusBroadcast = millis();
   }
 
   ledOn = !ledOn;
