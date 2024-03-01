@@ -54,6 +54,7 @@ const int daylightOffset_sec = 3600;
 
 AsyncMqttClient mqttClient;
 TimerHandle_t mqttReconnectTimer;
+TimerHandle_t mqttRegisterIDTimer;
 
 // Published Topics
 const char *mainPubTopic = "floortherm/"; // Topic to publish
@@ -69,6 +70,7 @@ const char *SubTopic = "floortherm/#";
 const char *setTempTopic = "floortherm/#/set";
 const char *enableHeatTopic = "floortherm/#/enable";
 const char *getStatusTopic = "floortherm/get";
+const char *onlineTopic = "floortherm/online";
 
 // Topic Commands
 const char *enableCommand = "enable";
@@ -99,7 +101,6 @@ bool zoneHeatEnable[] = {false, false, false, false, false};
 // Zone Data
 const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
 const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
-const char *nameSpacing[] = {"   ", "", "", "    ", "    "};
 int inPins[] = {32, 33, 34, 35, 36};
 int outPins[] = {16, 17, 18, 19, 23};
 
@@ -119,6 +120,9 @@ const char delim[2] = "/";
 const int docCapacity = JSON_OBJECT_SIZE(5) + 5 * JSON_OBJECT_SIZE(4);
 const int roomDocCapacity = JSON_OBJECT_SIZE(4);
 int logDisplayCounter = 0;
+int maxOtherIndex = 0;
+int myIndex = 0;
+bool indexWaitDone = false;
 
 // ********************* Debug Parameters ************************
 String methodName = "FloorTherm";
@@ -159,23 +163,12 @@ void printTimestamp(Print *_logOutput, int x)
   _logOutput->print(": ");
 }
 
-void loadPrefs()
-{
-  zoneSetTemp[0] = preferences.getInt("Z0SetTemp");
-  zoneSetTemp[1] = preferences.getInt("Z1SetTemp");
-  zoneSetTemp[2] = preferences.getInt("Z2SetTemp");
-  zoneSetTemp[3] = preferences.getInt("Z3SetTemp");
-  zoneSetTemp[4] = preferences.getInt("Z4SetTemp");
-
-  zoneHeatEnable[0] = preferences.getBool("Z0Enabled");
-  zoneHeatEnable[1] = preferences.getBool("Z1Enabled");
-  zoneHeatEnable[2] = preferences.getBool("Z2Enabled");
-  zoneHeatEnable[3] = preferences.getBool("Z3Enabled");
-  zoneHeatEnable[4] = preferences.getBool("Z4Enabled");
-}
-
 void storePrefs()
 {
+  String oldMethodName = methodName;
+  methodName = "storePrefs()";
+  Log.verboseln("Entering...");
+
   preferences.putInt("Z0SetTemp", zoneSetTemp[0]);
   preferences.putInt("Z1SetTemp", zoneSetTemp[1]);
   preferences.putInt("Z2SetTemp", zoneSetTemp[2]);
@@ -187,33 +180,102 @@ void storePrefs()
   preferences.putBool("Z2Enabled", zoneHeatEnable[2]);
   preferences.putBool("Z3Enabled", zoneHeatEnable[3]);
   preferences.putBool("Z4Enabled", zoneHeatEnable[4]);
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
+}
+
+void loadPrefs()
+{
+  String oldMethodName = methodName;
+  methodName = "loadPrefs()";
+  Log.verboseln("Entering...");
+
+  bool doesExist = preferences.isKey("myTestKey");
+
+  if (doesExist)
+  {
+    zoneSetTemp[0] = preferences.getInt("Z0SetTemp");
+    zoneSetTemp[1] = preferences.getInt("Z1SetTemp");
+    zoneSetTemp[2] = preferences.getInt("Z2SetTemp");
+    zoneSetTemp[3] = preferences.getInt("Z3SetTemp");
+    zoneSetTemp[4] = preferences.getInt("Z4SetTemp");
+
+    zoneHeatEnable[0] = preferences.getBool("Z0Enabled");
+    zoneHeatEnable[1] = preferences.getBool("Z1Enabled");
+    zoneHeatEnable[2] = preferences.getBool("Z2Enabled");
+    zoneHeatEnable[3] = preferences.getBool("Z3Enabled");
+    zoneHeatEnable[4] = preferences.getBool("Z4Enabled");
+  }
+  else
+  {
+    Log.warningln("Could not find Preferences!");
+    storePrefs();
+  }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void buildCommandTopics()
 {
-  for (int i = 0; i < 5;i++)
+  String oldMethodName = methodName;
+  methodName = "buildCommandTopics()";
+  Log.verboseln("Entering...");
+
+  for (int i = 0; i < 5; i++)
   {
     sprintf(tempTopics[i], "floortherm/%s/set", zoneNames[i]);
     sprintf(enableTopics[i], "floortherm/%s/enable", zoneNames[i]);
   }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
+}
+
+void setIndex()
+{
+  String oldMethodName = methodName;
+  methodName = "setIndex()";
+  Log.verboseln("Entering...");
+
+  indexWaitDone = true;
+  char idx[1];
+  sprintf(idx, "%d", maxOtherIndex + 1);
+  Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
+  mqttClient.publish(aliveTopic, 1, false, idx);
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void connectToWifi()
 {
-  Serial.println("Connecting to Wi-Fi...");
+  String oldMethodName = methodName;
+  String methodName = "connectToWifi()";
+
+  Log.infoln("Connecting to Wi-Fi...");
   WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, INADDR_NONE);
   WiFi.setHostname(hostname.c_str());
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+
+  methodName = oldMethodName;
 }
 
 void connectToMqtt()
 {
-  Serial.println("Connecting to MQTT...");
+  String oldMethodName = methodName;
+  String methodName = "connectToMqtt()";
+
+  Log.infoln("Connecting to MQTT...");
   mqttClient.connect();
+
+  methodName = oldMethodName;
 }
 
 void WiFiEvent(WiFiEvent_t event)
 {
+  String oldMethodName = methodName;
   methodName = "WiFiEvent(WiFiEvent_t event)";
   Log.verboseln("Entering...");
 
@@ -222,15 +284,15 @@ void WiFiEvent(WiFiEvent_t event)
 #if USING_CORE_ESP32_CORE_V200_PLUS
 
   case ARDUINO_EVENT_WIFI_READY:
-    Serial.println("WiFi ready");
+    Log.infoln("WiFi ready");
     break;
 
   case ARDUINO_EVENT_WIFI_STA_START:
-    Serial.println("WiFi STA starting");
+    Log.infoln("WiFi STA starting");
     break;
 
   case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-    Serial.println("WiFi STA connected");
+    Log.infoln("WiFi STA connected");
     break;
 
   case ARDUINO_EVENT_WIFI_STA_GOT_IP6:
@@ -252,7 +314,7 @@ void WiFiEvent(WiFiEvent_t event)
     break;
 
   case ARDUINO_EVENT_WIFI_STA_LOST_IP:
-    Serial.println("WiFi lost IP");
+    Log.infoln("WiFi lost IP");
     break;
 
   case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
@@ -266,14 +328,14 @@ void WiFiEvent(WiFiEvent_t event)
 #else
 
   case SYSTEM_EVENT_STA_GOT_IP:
-    Serial.println("WiFi connected");
-    Serial.println("IP address: ");
-    Serial.println(WiFi.localIP());
+    Log.infoln("WiFi connected");
+    Log.infoln("IP address: ");
+    Log.infoln(WiFi.localIP());
     connectToMqtt();
     break;
 
   case SYSTEM_EVENT_STA_DISCONNECTED:
-    Serial.println("WiFi lost connection");
+    Log.infoln("WiFi lost connection");
     xTimerStop(mqttReconnectTimer, 0); // ensure we don't reconnect to MQTT while reconnecting to Wi-Fi
     xTimerStart(wifiReconnectTimer, 0);
     break;
@@ -284,15 +346,17 @@ void WiFiEvent(WiFiEvent_t event)
   }
 
   Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void printSeparationLine()
 {
-  Serial.println("************************************************");
+  Log.infoln("************************************************");
 }
 
 void onMqttConnect(bool sessionPresent)
 {
+  String oldMethodName = methodName;
   methodName = "onMqttConnect(bool sessionPresent)";
   Log.verboseln("Entering...");
 
@@ -305,20 +369,21 @@ void onMqttConnect(bool sessionPresent)
   uint16_t packetIdSub = mqttClient.subscribe(SubTopic, 2);
   Log.infoln("Subscribing at QoS 2, packetId: %u", packetIdSub);
 
-  mqttClient.publish(aliveTopic, 1, false, "1");
-  Log.infoln("Publishing at QoS 0");
-
   mqttClient.setWill(willTopic, 1, true, "1");
   Log.infoln("Set Last Will and Testament message.");
+
+  xTimerStart(mqttRegisterIDTimer, 0);
 
   // printSeparationLine();
 
   Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
 {
-  methodName = "onMqttConnect(bool sessionPresent)";
+  String oldMethodName = methodName;
+  methodName = "onMqttDisconnect(AsyncMqttClientDisconnectReason reason)";
   Log.verboseln("Entering...");
 
   (void)reason;
@@ -330,25 +395,38 @@ void onMqttDisconnect(AsyncMqttClientDisconnectReason reason)
     Log.infoln("Reconnecting to MQTT broker.");
     xTimerStart(mqttReconnectTimer, 0);
   }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)
 {
+  String oldMethodName = methodName;
   methodName = "onMqttSubscribe(const uint16_t &packetId, const uint8_t &qos)";
+  //methodName = __PRETTY_FUNCTION__;
 
   Log.infoln("Subscribe acknowledged.");
-  Log.infoln("  packetId: %u    qos:  %u", packetId, qos);
+  // Log.infoln("  packetId: %u    qos:  %u", packetId, qos);
+
+  methodName = oldMethodName;
 }
 
 void onMqttUnsubscribe(const uint16_t &packetId)
 {
+  String oldMethodName = methodName;
   methodName = "onMqttUnsubscribe(const uint16_t &packetId)";
 
-  Log.infoln("Unsubscribe acknowledged.  packetId: %u", packetId);
+  // Log.infoln("Unsubscribe acknowledged.  packetId: %u", packetId);
+
+  methodName = oldMethodName;
 }
 
 void publishZoneAlarmMessage(char *zoneName, char *message)
 {
+  String oldMethodName = methodName;
+  methodName = "publishZoneAlarmMessage()";
+
   const char *slash = "/";
 
   char *topic = strdup(alarmTopic);
@@ -358,24 +436,30 @@ void publishZoneAlarmMessage(char *zoneName, char *message)
   char *alarmMessage = message;
   const char *msg = alarmMessage;
   mqttClient.publish(topic, 0, false, alarmMessage);
+
+  methodName = oldMethodName;
 }
 
 void logMQTTMessage(char *topic, int len, char *payload)
 {
+  String oldMethodName = methodName;
   methodName = "logMQTTMessage(char *topic, int len, char *payload)";
   Log.infoln("Topic: %s", topic);
 
-  Log.infoln("Payload Length: %d", len);
+  // Log.infoln("Payload Length: %d", len);
 
   if (!isNullorEmpty(payload))
   {
-    Log.infoln("Payload: ");
-    Log.infoln(payload);
+    Log.verbose("Payload: " CR);
+    Log.verboseln("%s", payload);
   }
+
+  methodName = oldMethodName;
 }
 
 String getRoomStatusJson(int i)
 {
+  String oldMethodName = methodName;
   methodName = "getRoomStatusJson()";
   Log.verboseln("Entering...");
 
@@ -391,11 +475,13 @@ String getRoomStatusJson(int i)
   serializeJson(doc, payload);
 
   Log.verboseln("Exiting...");
+  methodName = oldMethodName;
   return payload;
 }
 
 String getStatusJson()
 {
+  String oldMethodName = methodName;
   methodName = "getStatusJson()";
   Log.verboseln("Entering...");
 
@@ -414,11 +500,13 @@ String getStatusJson()
   serializeJson(doc, payload);
 
   Log.verboseln("Exiting...");
+  methodName = oldMethodName;
   return payload;
 }
 
 void publishHeatingStatus()
 {
+  String oldMethodName = methodName;
   methodName = "publishHeatingStatus()";
   Log.verboseln("Entering...");
 
@@ -429,11 +517,16 @@ void publishHeatingStatus()
   Log.infoln("Publishing Status at QoS 0");
   mqttClient.publish(statusTopic, 0, false, doc);
   Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
 {
+  String oldMethodName = methodName;
+  methodName = "onMqttMessage()";
+  Log.verboseln("Entering...");
+
   // This safely extracts the proper payload message
   //(void)payload;
   char msg[len + 1];
@@ -443,181 +536,85 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   String recTopic = String(topic);
   bool foundZone = false;
 
-  logMQTTMessage(topic, len, msg);
-
-  if (strcmp(topic, getStatusTopic) == 0) // This is a request for status
+  if (strcmp(topic, statusTopic) == 0)
   {
-    Serial.println("Processing GET command!");
-    // Publish Heating Status
-    publishHeatingStatus();
   }
   else
   {
-    for (int i = 0; i < 5;i++)
+    logMQTTMessage(topic, len, msg);
+
+    if (strcmp(topic, getStatusTopic) == 0) // This is a request for status
     {
-      //String 
-      if (strcmp(topic, tempTopics[i])
+      Log.infoln("Processing GET command!");
+      // Publish Heating Status
+      publishHeatingStatus();
+    }
+    else if (strcmp(topic, onlineTopic) == 0) // This is a request for status
+    {
+      int otherIndex = 0;
+      otherIndex = atoi(msg);
+      if (indexWaitDone)
       {
-        int sentval = atoi(msg);
-        if (zoneSetTemp[i] != sentval)
-        {
-          // Send MQTT message that Set Temp Changed
-          Log.infoln("%s Set Temp changed: %dF ---> %dF", zoneNames[i], zoneSetTemp[i], sentval);
-          publishHeatingStatus();
-          zoneSetTemp[i] = sentval;
-          storePrefs();
-        }
+        Log.infoln("Received own index: %d", otherIndex);
       }
-      else if (strcmp(topic, enableTopics[i])
+      else
       {
-        int sentval = atoi(msg);
-        if (zoneHeatEnable[i] != (bool)sentval)
-        {
-          // Send MQTT message that Enabled State Changed
-          Log.infoln("%s Enable State Changed from %s", zoneHeatEnable[i] ? "Disabled ---> Enabled" : "Enabled ---> Disabled");
-          zoneHeatEnable[i] = (bool)sentval;
-          storePrefs();
-        }
+        Log.infoln("Found other floortherm with index: %d", otherIndex);
+        if (maxOtherIndex < otherIndex)
+          maxOtherIndex = otherIndex;
       }
     }
-  }
-
-/*
-  Serial.print("Received");
-  Serial.print("  topic: ");
-  Serial.println(topic);
-
-  char *message;
-  char *target;
-  char *command;
-  char *token;
-  int i = 0;
-
-  token = strtok(topic, delim);
-  message = token;
-
-  while (token != NULL)
-  {
-    token = strtok(NULL, delim);
-    i++;
-    if (i == 1)
+    else
     {
-      target = token;
-    }
-    else if (i == 2)
-    {
-      command = token;
-    }
-  }
-
-  i = 0;
-
-  Serial.print("Message: ");
-  if (message != NULL)
-    Serial.println(message);
-  else
-    Serial.println("!!!EMPTY!!!");
-
-  Serial.print("Target: ");
-  if (target != NULL)
-    Serial.println(target);
-  else
-    Serial.println("!!!EMPTY!!!");
-
-  Serial.print("Command: ");
-  if (command != NULL)
-    Serial.println(command);
-  else
-    Serial.println("!!!EMPTY!!!");
-
-  Serial.print("Payload Length: ");
-  Serial.println(len);
-
-  Serial.print("Payload: ");
-
-  if (strcmp(target, statusReport) == 0)
-  {
-    Serial.println(msg);
-  }
-  else if (strcmp(target, getCommand) == 0)
-  {
-    Serial.println("Processing GET command!");
-    // Publish Heating Status
-    publishHeatingStatus();
-  }
-  else
-  {
-    Serial.println(msg);
-    while (i < 5)
-    {
-      if (strcmp(target, zoneNames[i]) == 0)
+      for (int i = 0; i < 5; i++)
       {
-        int sentval = atoi(msg);
-        Serial.println(sentval);
-        if (strcmp(command, enableCommand) == 0)
+        // String
+        if (strcmp(topic, tempTopics[i]) == 0)
         {
-          foundZone = true;
-          if (zoneHeatEnable[i] != (bool)sentval)
-          {
-            // Send MQTT message that Enabled State Changed
-            Serial.print("Enable State Changed from ");
-            if (!zoneHeatEnable[i])
-            {
-              Serial.println("Disabled ---> Enabled");
-            }
-            else
-            {
-              Serial.println("Enabled ---> Disabled");
-            }
-          }
-          zoneHeatEnable[i] = (bool)sentval;
-          storePrefs();
-        }
-        else if (strcmp(command, setCommand) == 0)
-        {
+          int sentval = atoi(msg);
           if (zoneSetTemp[i] != sentval)
           {
             // Send MQTT message that Set Temp Changed
-            Serial.print(zoneSetTemp[i]);
-            Serial.print("F --> ");
-            Serial.print(sentval);
-            Serial.println("F");
+            // Log.infoln("%s Set Temp changed: %dF ---> %dF", zoneNames[i], zoneSetTemp[i], sentval);
+            publishHeatingStatus();
+            zoneSetTemp[i] = sentval;
+            storePrefs();
           }
-          zoneSetTemp[i] = sentval;
-          storePrefs();
         }
-        else if (strcmp(command, getCommand) == 0)
+        else if (strcmp(topic, enableTopics[i]) == 0)
         {
-          char *topicString = strdup(statusTopic);
-          strcat(topicString, "/");
-          strcat(topicString, zoneNames[i]);
-          Serial.print("Topic: ");
-          Serial.println(topicString);
-          String rDoc = getRoomStatusJson(i);
-          const char *doc = rDoc.c_str();
-          Serial.print("Payload: ");
-          Serial.println(doc);
-          mqttClient.publish(topicString, 0, false, doc);
-          Serial.println("Publishing Status at QoS 0");
+          int sentval = atoi(msg);
+          if (zoneHeatEnable[i] != (bool)sentval)
+          {
+            // Send MQTT message that Enabled State Changed
+            Log.infoln("%s Enable State Changed from %s", zoneHeatEnable[i] ? "Disabled ---> Enabled" : "Enabled ---> Disabled");
+            zoneHeatEnable[i] = (bool)sentval;
+            storePrefs();
+          }
         }
       }
-      i++;
     }
   }
 
-  Serial.println();
-  */
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void onMqttPublish(const uint16_t &packetId)
 {
-  Serial.println("Publish acknowledged.");
-  Serial.print("  packetId: ");
-  Serial.println(packetId);
+  String oldMethodName = methodName;
+  methodName = "onMqttPublish()";
+  // Log.infoln("Publish acknowledged.  packetId: %s", packetId);
+
+  methodName = oldMethodName;
 }
 
 float ConvertValToTemp(int Vo)
 {
+  String oldMethodName = methodName;
+  methodName = "ConvertValToTemp(int Vo)";
+  Log.verboseln("Entering...");
+
   float Vout, Rt = 0;
   float T, Tc, Tf = 0;
 
@@ -627,12 +624,19 @@ float ConvertValToTemp(int Vo)
   Tc = T - 273.15;                        // Celsius
   Tf = Tc * 9 / 5 + 32;                   // Fahrenheit
 
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
   return Tf;
 }
 
 void GetTemps()
 {
-  Serial.print(".");
+  String oldMethodName = methodName;
+  methodName = "GetTemps()";
+  Log.verboseln("Entering...");
+
+  Log.verboseln("Reading Temps");
+
   for (int i = 0; i < 5; i++)
   {
     int avg = 0;
@@ -644,18 +648,17 @@ void GetTemps()
     }
     zoneReadVal[i] = avg / 10.0;
     zoneActualTemp[i] = ConvertValToTemp(zoneReadVal[i]);
-
-    if ((zoneActualTemp[i] > 92) && (logDisplayCounter > 9))
-    {
-      const char *warningMessage = "Overheating above 92F!!!";
-
-      publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
-    }
   }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void SetHeatControl()
 {
+  String oldMethodName = methodName;
+  methodName = "SetHeatControl()";
+  Log.verboseln("Entering...");
 
   for (int i = 0; i < 5; i++)
   {
@@ -672,6 +675,7 @@ void SetHeatControl()
           // Cool enough to turn on heat?
           if (zoneActualTemp[i] < (zoneSetTemp[i] - 0.5))
           { // Yes - Heat it up!
+            Log.verboseln("%s HEATING", zoneNames[i]);
             zoneHeating[i] = true;
             zoneHeatingMode[i] = "HEATING";
           }
@@ -680,23 +684,26 @@ void SetHeatControl()
             // IDLE - if it is ON, leave it on i.e. still Heating
             //        if it is OFF, leave it OFF i.e. cooling down from (zoneSetTemp[i] +1)
             // zoneHeatingMode[i] = "IDLE";
+            // Log.verboseln("", zoneNames[i]);
           }
         }
         else
         { // No - Hot enough, stop heating.
+          Log.verboseln("%s IDLE", zoneNames[i]);
           zoneHeating[i] = false;
           zoneHeatingMode[i] = "IDLE";
         }
       }
       else // NOT zoneHeatEnable[i]
       {
+        const char *warningMessage = "Unrequested Heating!!!";
         if (zoneHeating[i])
         {
-          const char *warningMessage = "Unrequested Heating!!!";
-          Serial.println("!!! ERROR !!!");
+          Log.verboseln("!!! ERROR !!! %s", warningMessage);
           // Should also send MQTT message to alert someone
           publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
         }
+        Log.verboseln("!!! ERROR !!! %s - Shutting OFF %s", warningMessage, zoneNames[i]);
         zoneHeating[i] = false;
         zoneHeatingMode[i] = "OFF";
       }
@@ -711,66 +718,82 @@ void SetHeatControl()
     else
     {
       const char *warningMessage = "OVERHEATING";
-      Serial.println("!!! ERROR !!!");
+      Log.verboseln("!!! ERROR !!! %s", warningMessage);
       // Should also send MQTT message to alert someone
       publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
+
+      Log.verboseln("!!! ERROR !!! %s - Shutting OFF %s", warningMessage, zoneNames[i]);
       zoneHeating[i] = false;
       zoneHeatingMode[i] = "OFF";
     }
   }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void logHeatingStatus()
 {
-  Serial.println("Status:");
+  String oldMethodName = methodName;
+  methodName = "logHeatingStatus()";
+  //Log.verboseln("Entering...");
+
+  Log.info("Status:");
   for (int j = 0; j < 5; j++)
   {
-    Serial.print(zoneNames[j]);
-    // Serial.print(nameSpacing[j]);
-    Serial.print("   ");
-    Serial.print(": ");
-    Serial.print("    ");
-    Serial.print("Current: ");
-    Serial.print(zoneActualTemp[j]);
-    Serial.print("F");
-    Serial.print("    ");
+    Log.info(CR);
+    Log.info(zoneNames[j]);
+    // Log.info(nameSpacing[j]);
+    Log.info("   ");
+    Log.info(": ");
+    Log.info("    ");
+    Log.info("Current: ");
+    // Log.info(zoneActualTemp[j]);
+    Log.info("F");
+    Log.info("    ");
     if (zoneHeatEnable[j])
     {
-      Serial.print("Enabled ");
-      Serial.print("    ");
-      Serial.print("Target: ");
-      Serial.print(zoneSetTemp[j]);
-      Serial.print("F");
-      Serial.print("    ");
+      Log.info("Enabled ");
+      Log.info("    ");
+      Log.info("Target: ");
+      // Log.info(zoneSetTemp[j]);
+      Log.info("F");
+      Log.info("    ");
 
       if (zoneHeating[j])
       {
-        Serial.print("HEATING");
+        Log.info("HEATING");
       }
       else
       {
-        Serial.print("NOT HEATING");
+        Log.info("NOT HEATING");
       }
     }
     else
     {
-      Serial.print("Disabled");
+      Log.info("Disabled");
     }
 
     if ((!zoneHeatEnable[j] && zoneHeating[j]) || ((zoneActualTemp[j] > 90) && zoneHeating[j]))
     {
-      Serial.println("!!! ERROR !!!");
+      Log.info("!!! ERROR !!!");
     }
     else
     {
-      Serial.println();
+      Log.info("");
     }
   }
-  // Serial.println();
+  // Log.info();
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void displayHeatingStatus()
 {
+  String oldMethodName = methodName;
+  methodName = "displayHeatingStatus()";
+  Log.verboseln("Entering...");
+
   int x = 35;
   int y = 1;
 
@@ -785,7 +808,7 @@ void displayHeatingStatus()
     display.setCursor(x, y);
     display.print(zoneNames[j]);
 
-    // Serial.println();
+    // Log.infoln();
 
     x += 35;
     display.setCursor(x, y);
@@ -835,21 +858,26 @@ void displayHeatingStatus()
     y += 10;
   }
   display.display();
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void setupDisplay()
 {
-  Serial.println("Setting up display!");
+  String oldMethodName = methodName;
+  methodName = "setupDisplay()";
+  Log.verboseln("Entering...");
+
   Wire.begin(I2C_SDA, I2C_SCL); /// #2 Identify SDA & SLC pins for your board
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
   {
     /// Mode + Screen Address
-    Serial.println("Display failed to initialize");
+    Log.warningln("Display failed to initialize");
     return;
   }
   else
   {
-    Serial.println("Display initializing...");
+    Log.infoln("Display initializing...");
     delay(200);                  /// time for board to initialize?
     display.clearDisplay();      ///
     display.setTextColor(WHITE); ///
@@ -864,12 +892,16 @@ void setupDisplay()
     delay(5000);       /// time for message to stay up
     display.clearDisplay();
     display.display();
-    Serial.println("Display setup complete!");
+    Log.infoln("Display setup complete!");
   }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void setup()
 {
+  String oldMethodName = methodName;
   methodName = "setup()";
 
   preferences.begin("ACclimate", false);
@@ -898,13 +930,14 @@ void setup()
 
   setupDisplay();
 
-  Serial.print("Reading Temps.");
   GetTemps();
-  Serial.println(".");
+
   mqttReconnectTimer = xTimerCreate("mqttTimer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
                                     reinterpret_cast<TimerCallbackFunction_t>(connectToMqtt));
   wifiReconnectTimer = xTimerCreate("wifiTimer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
                                     reinterpret_cast<TimerCallbackFunction_t>(connectToWifi));
+  mqttRegisterIDTimer = xTimerCreate("indexTimer", pdMS_TO_TICKS(2000), pdFALSE, (void *)0,
+                                     reinterpret_cast<TimerCallbackFunction_t>(setIndex));
 
   WiFi.onEvent(WiFiEvent);
 
@@ -919,27 +952,18 @@ void setup()
 
   connectToWifi();
 
-  Serial.print("Reading Temps.");
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
 
 void loop()
 {
-  if (logDisplayCounter == 0)
-  {
-    Serial.println("");
-    Serial.print("Reading Temps");
-  }
-  logDisplayCounter++;
+  String oldMethodName = methodName;
+  methodName = "loop()";
+
   GetTemps();
   SetHeatControl();
   displayHeatingStatus();
-  if (logDisplayCounter > 9)
-  {
-    Serial.println("");
-    Serial.println("");
-    logHeatingStatus();
-    logDisplayCounter = 0;
-  }
   // delay(1000);
 
   bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
@@ -959,4 +983,7 @@ void loop()
 
   ledOn = !ledOn;
   digitalWrite(LED_PIN, ledOn);
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
 }
