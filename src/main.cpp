@@ -80,8 +80,6 @@ const char *setCommand = "set";
 const char *getCommand = "get";
 const char *statusReport = "status";
 
-char tempTopics[5][18];
-char enableTopics[5][21];
 
 // ********************* App Parameters ************************
 Preferences preferences;
@@ -110,6 +108,10 @@ int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeating[] = {false, false, false, false, false};
 String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
 int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
+
+const char *tempTopics[] = {"floortherm/MBR/set", "floortherm/NAV/set", "floortherm/OFC/set", "floortherm/SMV/set", "floortherm/MAV/set"};
+
+const char *enableTopics[] = {"floortherm/MBR/enable", "floortherm/NAV/enable", "floortherm/OFC/enable", "floortherm/SMV/enable", "floortherm/MAV/enable"};
 
 unsigned long lastStatusBroadcast = 0;
 
@@ -223,13 +225,17 @@ void buildCommandTopics()
   methodName = "buildCommandTopics()";
   Log.verboseln("Entering...");
 
+  Log.infoln("Building strings...");
   for (int i = 0; i < 5; i++)
   {
-    sprintf(tempTopics[i], "floortherm/%s/set", zoneNames[i]);
-    sprintf(enableTopics[i], "floortherm/%s/enable", zoneNames[i]);
+    //tempTopics[i] = "floortherm/" + zoneNames[i] + "/set";
+    //sprintf(enableTopics[i], "floortherm/%s/enable", zoneNames[i]);
   }
 
-  Log.verboseln("Exiting...");
+  for (int i = 0; i < 5; i++)
+    Log.infoln("%d %s", i, enableTopics[i]);
+
+    Log.verboseln("Exiting...");
   methodName = oldMethodName;
 }
 
@@ -575,7 +581,8 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
           if (zoneSetTemp[i] != sentval)
           {
             // Send MQTT message that Set Temp Changed
-            // Log.infoln("%s Set Temp changed: %dF ---> %dF", zoneNames[i], zoneSetTemp[i], sentval);
+            Log.infoln("%s Set Temp changed: %d ---> %d", zoneNames[i], zoneSetTemp[i], sentval);
+            //Log.infoln("Matched Set topic.");
             publishHeatingStatus();
             zoneSetTemp[i] = sentval;
             storePrefs();
@@ -587,7 +594,7 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
           if (zoneHeatEnable[i] != (bool)sentval)
           {
             // Send MQTT message that Enabled State Changed
-            Log.infoln("%s Enable State Changed from %s", zoneHeatEnable[i] ? "Disabled ---> Enabled" : "Enabled ---> Disabled");
+            Log.infoln("%s enable State Changed from %T ----> %T", zoneNames[i], zoneHeatEnable[i], sentval);
             zoneHeatEnable[i] = (bool)sentval;
             storePrefs();
           }
@@ -749,7 +756,7 @@ void logHeatingStatus()
     if (zoneHeating[j])
       heating = "HEATING";
 
-    Log.infoln("%s: Enabled: %T     Current: %F     Target: %i     Heating: %s     %s", zoneNames[j], zoneActualTemp[j], zoneSetTemp[j], heating.c_str(), err.c_str());
+    Log.infoln("%s: Enabled: %T     Current: %F     Target: %i     Heating: %s     %s", zoneNames[j], zoneHeatEnable[j], zoneActualTemp[j], zoneSetTemp[j], heating.c_str(), err.c_str());
 
   }
 
@@ -809,6 +816,7 @@ void displayHeatingStatus()
       else
       {
         x += 25;
+        display.setCursor(x, y);
         display.print("IDLE");
       }
       x += 10;
@@ -822,6 +830,7 @@ void displayHeatingStatus()
     else
     {
       x += 40;
+      display.setCursor(x, y);
       display.print("OFF");
     }
     y += 10;
@@ -893,7 +902,6 @@ void setup()
 
   pinMode(LED_PIN, OUTPUT);
 
-  buildCommandTopics();
 
   loadPrefs();
 
