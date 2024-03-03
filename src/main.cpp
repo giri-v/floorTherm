@@ -1,8 +1,7 @@
-
-
 #include <Arduino.h>
 #include <Logger.h>
 #define LOG_LEVEL Log.INFO
+#define DEBUG_MODE
 #include <Preferences.h>
 #include <WiFi.h>
 #include <time.h>
@@ -99,11 +98,11 @@ bool zoneHeatEnable[] = {false, false, false, false, false};
 
 // Zone Data
 #if defined(DEBUG_MODE)
-const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
-const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
-#else
 const char *zoneFriendlyNames[] = {"Zone A", "Zone B", "Zone C", "Zone D", "Zone E"};
 const char *zoneNames[] = {"ZNA", "ZNB", "ZNC", "ZND", "ZNE"};
+#else
+const char *zoneFriendlyNames[] = {"Master Bedroom", "Narayan's Room", "Office", "Shanti's Room", "Maya's Room"};
+const char *zoneNames[] = {"MBR", "NAV", "OFC", "SMV", "MAV"};
 #endif
 
 int inPins[] = {32, 33, 34, 35, 36};
@@ -115,10 +114,6 @@ int zoneReadVal[] = {2048, 2048, 2048, 2048, 2048};
 bool zoneHeating[] = {false, false, false, false, false};
 String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
 int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
-
-const char *tempTopics[] = {"floortherm/ZNA/set", "floortherm/ZNB/set", "floortherm/ZNC/set", "floortherm/ZND/set", "floortherm/ZNE/set"};
-
-const char *anableTopics[] = {"floortherm/ZNA/enable", "floortherm/ZNB/enable", "floortherm/ZNC/enable", "floortherm/ZND/enable", "floortherm/ZNE/enable"};
 
 char setPointTopics[5][50];
 char enableTopics[5][50];
@@ -305,11 +300,15 @@ void publishIndex()
   methodName = "publishIndex()";
   Log.verboseln("Entering...");
 
-  Log.infoln("Publish check...");
-  char *idx;
+  char idx[10];
   sprintf(idx, "%d", floorthermIndex);
   Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
+
+#if defined(DEBUG_MODE)
   mqttClient.publish(aliveTopic, 1, false, idx);
+#else
+  mqttClient.publish(aliveTopic, 1, true, idx);
+#endif
 
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
@@ -321,6 +320,8 @@ void setIndex()
   methodName = "setIndex()";
   Log.verboseln("Entering...");
 
+  Log.infoln("Finished waiting for other floortherm index messages.");
+  Log.infoln("Highest received other index is %d", maxOtherIndex);
   indexWaitDone = true;
   if (floorthermIndex == -1)
   {
@@ -459,16 +460,9 @@ void onMqttConnect(bool sessionPresent)
 
   if (floorthermIndex == -1)
     xTimerStart(mqttRegisterIDTimer, 0);
-  /*
-else
-{
-  char *idx;
-  sprintf(idx, "%d", floorthermIndex);
-  Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
-  mqttClient.publish(aliveTopic, 1, false, idx);
-}
-*/
-  // printSeparationLine();
+  else
+    publishIndex();
+  
 
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
@@ -814,7 +808,9 @@ void SetHeatControl()
   {
     if (zoneActualTemp[i] < 90)
     {
-      Log.verboseln("Zone %s temp = %.2f  < 90F", zoneNames[i], zoneActualTemp[i]);
+      char zAT[20];
+     sprintf(zAT,"%.2f", zoneActualTemp[i]);
+      Log.verboseln("Zone %s temp = %f  < 90F", zoneNames[i], zAT);
       // Are we allowed to heat?
       if (zoneHeatEnable[i])
       { // Yes - Decide if we should heat.
@@ -1027,7 +1023,6 @@ void setup()
 
   preferences.begin("ACclimate", false);
 
-
   Serial.begin(115200);
 
   while (!Serial && millis() < 5000)
@@ -1049,7 +1044,6 @@ void setup()
     pinMode(outPins[i], OUTPUT);
 
   pinMode(LED_PIN, OUTPUT);
-
 
   buildCommandTopics();
 
@@ -1087,7 +1081,7 @@ void loop()
   methodName = "loop()";
 
   GetTemps();
-  
+
   SetHeatControl();
   displayHeatingStatus();
   // delay(1000);
