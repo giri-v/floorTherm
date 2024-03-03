@@ -70,14 +70,6 @@ const char *getStatusTopic = "floortherm/get";
 const char *logLevelTopic = "floortherm/sys/log/";
 const char *restartTopic = "floortherm/sys/restart";
 
-const char *logLevelTopics[] = {
-    "floortherm/sys/log/silent",
-    "floortherm/sys/log/fatal",
-    "floortherm/sys/log/error",
-    "floortherm/sys/log/warning",
-    "floortherm/sys/log/info",
-    "floortherm/sys/log/trace",
-    "floortherm/sys/log/verbose"};
 
 // ********************* App Parameters ************************
 Preferences preferences;
@@ -257,20 +249,8 @@ void buildCommandTopics()
   methodName = "buildCommandTopics()";
   Log.verboseln("Entering...");
 
-  String tT[5] = {
-      "",
-      "",
-      "",
-      "",
-      "",
-  };
-  String eT[5] = {
-      "",
-      "",
-      "",
-      "",
-      "",
-  };
+  String tT[5];
+  String eT[5];
 
   Log.infoln("Building strings...");
   for (int i = 0; i < 5; i++)
@@ -304,11 +284,7 @@ void publishIndex()
   sprintf(idx, "%d", floorthermIndex);
   Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
 
-#if defined(DEBUG_MODE)
-  mqttClient.publish(aliveTopic, 1, false, idx);
-#else
   mqttClient.publish(aliveTopic, 1, true, idx);
-#endif
 
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
@@ -631,19 +607,24 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   String recTopic = String(topic);
   bool foundZone = false;
 
-  logMQTTMessage(topic, len, msg);
 
   if (strcmp(topic, statusTopic) == 0) // This is a status message
   {
     // This is our own or another floortherm's status message, so ignore
     Log.verboseln("Ignoring Status Topic.");
+    Log.verboseln("Exiting...");
+    methodName = oldMethodName;
+    return;
   }
-  else if (strcmp(topic, aliveTopic) == 0) // This is an alive message from other floortherms
+
+  logMQTTMessage(topic, len, msg);
+
+  if (strcmp(topic, aliveTopic) == 0) // This is an alive message from other floortherms
   {
     Log.verboseln("Processing alive Topic");
     int otherIndex = 0;
     otherIndex = atoi(msg);
-    if (indexWaitDone)
+    if ((indexWaitDone || (floorthermIndex > -1)) && (otherIndex == floorthermIndex))
     {
       Log.infoln("Received own index: %d", otherIndex);
     }
@@ -957,6 +938,7 @@ void displayHeatingStatus()
         x += 25;
         display.setCursor(x, y);
         display.print("IDLE");
+        x += 30;
       }
       x += 10;
       display.setCursor(x, y);
@@ -1006,9 +988,6 @@ void setupDisplay()
     display.setCursor(1, 25);
     display.print("Starting");
     display.display(); /// needed to actually display the message
-    delay(5000);       /// time for message to stay up
-    display.clearDisplay();
-    display.display();
     Log.infoln("Display setup complete!");
   }
 
@@ -1084,7 +1063,6 @@ void loop()
 
   SetHeatControl();
   displayHeatingStatus();
-  // delay(1000);
 
   bool anyEnabled = zoneHeatEnable[0] || zoneHeatEnable[1] || zoneHeatEnable[2] || zoneHeatEnable[3];
   unsigned long rightNow = millis();
