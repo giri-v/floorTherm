@@ -2,7 +2,7 @@
 
 #include <Arduino.h>
 #include <Logger.h>
-#define LOG_LEVEL 4
+#define LOG_LEVEL Log.INFO
 #include <Preferences.h>
 #include <WiFi.h>
 #include <time.h>
@@ -59,7 +59,7 @@ TimerHandle_t mqttRegisterIDTimer;
 // Published Topics
 const char *mainPubTopic = "floortherm/"; // Topic to publish
 const char *aliveTopic = "floortherm/online";
-const char *onlineTopic = "floortherm/alarm";
+const char *alarmTopic = "floortherm/alarm";
 const char *willTopic = "floortherm/offline";
 const char *statusTopic = "floortherm/status";
 
@@ -71,7 +71,7 @@ const char *getStatusTopic = "floortherm/get";
 const char *logLevelTopic = "floortherm/sys/log/";
 const char *restartTopic = "floortherm/sys/restart";
 
-const char *logLevelNames[] = {
+const char *logLevelTopics[] = {
     "floortherm/sys/log/silent",
     "floortherm/sys/log/fatal",
     "floortherm/sys/log/error",
@@ -116,9 +116,12 @@ bool zoneHeating[] = {false, false, false, false, false};
 String zoneHeatingMode[] = {"OFF", "OFF", "OFF", "OFF", "OFF"};
 int zoneHeatArrowCounter[] = {0, 0, 0, 0, 0};
 
-const char *tempTopics[] = {"floortherm/MBR/set", "floortherm/NAV/set", "floortherm/OFC/set", "floortherm/SMV/set", "floortherm/MAV/set"};
+const char *tempTopics[] = {"floortherm/ZNA/set", "floortherm/ZNB/set", "floortherm/ZNC/set", "floortherm/ZND/set", "floortherm/ZNE/set"};
 
-const char *enableTopics[] = {"floortherm/MBR/enable", "floortherm/NAV/enable", "floortherm/OFC/enable", "floortherm/SMV/enable", "floortherm/MAV/enable"};
+const char *anableTopics[] = {"floortherm/ZNA/enable", "floortherm/ZNB/enable", "floortherm/ZNC/enable", "floortherm/ZND/enable", "floortherm/ZNE/enable"};
+
+char setPointTopics[5][50];
+char enableTopics[5][50];
 
 unsigned long lastStatusBroadcast = 0;
 
@@ -130,12 +133,11 @@ const int docCapacity = JSON_OBJECT_SIZE(5) + 5 * JSON_OBJECT_SIZE(4);
 const int roomDocCapacity = JSON_OBJECT_SIZE(4);
 int logDisplayCounter = 0;
 int maxOtherIndex = 0;
-int myIndex = 0;
 bool indexWaitDone = false;
 
 // ********************* Debug and Logging Parameters ************************
 String methodName = "FloorTherm";
-int debugLevel = LOG_LEVEL;
+int logLevel = LOG_LEVEL;
 
 const char *logLevelNames[] = {
     "silent",
@@ -188,6 +190,7 @@ void storePrefs()
   methodName = "storePrefs()";
   Log.verboseln("Entering...");
 
+  Log.infoln("Storing Preferences.");
   preferences.putInt("Z0SetTemp", zoneSetTemp[0]);
   preferences.putInt("Z1SetTemp", zoneSetTemp[1]);
   preferences.putInt("Z2SetTemp", zoneSetTemp[2]);
@@ -199,6 +202,8 @@ void storePrefs()
   preferences.putBool("Z2Enabled", zoneHeatEnable[2]);
   preferences.putBool("Z3Enabled", zoneHeatEnable[3]);
   preferences.putBool("Z4Enabled", zoneHeatEnable[4]);
+
+  preferences.putInt("LogLevel", logLevel);
 
   if (floorthermIndex > -1)
     preferences.putInt("FloorthermIndex", floorthermIndex);
@@ -212,6 +217,8 @@ void loadPrefs()
   String oldMethodName = methodName;
   methodName = "loadPrefs()";
   Log.verboseln("Entering...");
+
+  Log.infoln("Loading Preferences.");
 
   bool doesExist = preferences.isKey("Z0SetTemp");
 
@@ -229,6 +236,8 @@ void loadPrefs()
     zoneHeatEnable[2] = preferences.getBool("Z2Enabled");
     zoneHeatEnable[3] = preferences.getBool("Z3Enabled");
     zoneHeatEnable[4] = preferences.getBool("Z4Enabled");
+
+    logLevel = preferences.getInt("LogLevel");
   }
   else
   {
@@ -253,15 +262,54 @@ void buildCommandTopics()
   methodName = "buildCommandTopics()";
   Log.verboseln("Entering...");
 
+  String tT[5] = {
+      "",
+      "",
+      "",
+      "",
+      "",
+  };
+  String eT[5] = {
+      "",
+      "",
+      "",
+      "",
+      "",
+  };
+
   Log.infoln("Building strings...");
   for (int i = 0; i < 5; i++)
   {
-    // tempTopics[i] = "floortherm/" + zoneNames[i] + "/set";
-    // sprintf(enableTopics[i], "floortherm/%s/enable", zoneNames[i]);
+    String zn = zoneNames[i];
+
+    tT[i] = "floortherm/" + zn + "/set";
+    strcpy(setPointTopics[i], tT[i].c_str());
+
+    eT[i] = "floortherm/" + zn + "/enable";
+    strcpy(enableTopics[i], eT[i].c_str());
   }
 
   for (int i = 0; i < 5; i++)
-    Log.infoln("%d %s", i, enableTopics[i]);
+  {
+    Log.verboseln("%d %s", i, enableTopics[i]);
+    Log.verboseln("%d %s", i, setPointTopics[i]);
+  }
+
+  Log.verboseln("Exiting...");
+  methodName = oldMethodName;
+}
+
+void publishIndex()
+{
+  String oldMethodName = methodName;
+  methodName = "publishIndex()";
+  Log.verboseln("Entering...");
+
+  Log.infoln("Publish check...");
+  char *idx;
+  sprintf(idx, "%d", floorthermIndex);
+  Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
+  mqttClient.publish(aliveTopic, 1, false, idx);
 
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
@@ -274,12 +322,13 @@ void setIndex()
   Log.verboseln("Entering...");
 
   indexWaitDone = true;
-  char idx[1];
-  Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
-  floorthermIndex = maxOtherIndex + 1;
-  storePrefs();
-  sprintf(idx, "%d", floorthermIndex);
-  mqttClient.publish(aliveTopic, 1, false, idx);
+  if (floorthermIndex == -1)
+  {
+    floorthermIndex = maxOtherIndex + 1;
+    storePrefs();
+  }
+
+  publishIndex();
 
   Log.verboseln("Exiting...");
   methodName = oldMethodName;
@@ -410,7 +459,15 @@ void onMqttConnect(bool sessionPresent)
 
   if (floorthermIndex == -1)
     xTimerStart(mqttRegisterIDTimer, 0);
-
+  /*
+else
+{
+  char *idx;
+  sprintf(idx, "%d", floorthermIndex);
+  Log.infoln("Publishing FloorTherm Index %s at QoS 0", idx);
+  mqttClient.publish(aliveTopic, 1, false, idx);
+}
+*/
   // printSeparationLine();
 
   Log.verboseln("Exiting...");
@@ -466,7 +523,7 @@ void publishZoneAlarmMessage(char *zoneName, char *message)
 
   const char *slash = "/";
 
-  char *topic = strdup(onlineTopic);
+  char *topic = strdup(alarmTopic);
   strcat(topic, slash);
   strcat(topic, zoneName);
 
@@ -557,6 +614,13 @@ void publishHeatingStatus()
   methodName = oldMethodName;
 }
 
+void turnOffHeating(int i)
+{
+  zoneHeating[i] = false;
+  zoneHeatingMode[i] = "OFF";
+  digitalWrite(outPins[i], 0);
+}
+
 void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessageProperties &properties,
                    const size_t &len, const size_t &index, const size_t &total)
 {
@@ -573,89 +637,112 @@ void onMqttMessage(char *topic, char *payload, const AsyncMqttClientMessagePrope
   String recTopic = String(topic);
   bool foundZone = false;
 
-  if (strcmp(topic, statusTopic) == 0)
+  logMQTTMessage(topic, len, msg);
+
+  if (strcmp(topic, statusTopic) == 0) // This is a status message
   {
     // This is our own or another floortherm's status message, so ignore
+    Log.verboseln("Ignoring Status Topic.");
   }
-  else if (strcmp(topic, restartTopic) == 0)
+  else if (strcmp(topic, aliveTopic) == 0) // This is an alive message from other floortherms
   {
-    int sentval = atoi(msg);
-    if (sentval == floorthermIndex)
-      ESP.restart();
-  }
-  else if (strstr(topic, logLevelTopic) != NULL)
-  {
-    for (int l = 0; l < 7; l++)
+    Log.verboseln("Processing alive Topic");
+    int otherIndex = 0;
+    otherIndex = atoi(msg);
+    if (indexWaitDone)
     {
-      if (strstr(topic, logLevelNames[l]) != NULL)
-      {
-        int sentval = atoi(msg);
-        if (sentval == floorthermIndex)
-          Log.setLevel(l);
-      }
-    }
-  }
-  else
-  {
-    logMQTTMessage(topic, len, msg);
-
-    if (strcmp(topic, getStatusTopic) == 0) // This is a request for status
-    {
-      Log.infoln("Processing GET command!");
-      // Publish Heating Status
-      publishHeatingStatus();
-    }
-    else if (strcmp(topic, aliveTopic) == 0) // This is a request for status
-    {
-      int otherIndex = 0;
-      otherIndex = atoi(msg);
-      if (indexWaitDone)
-      {
-        Log.infoln("Received own index: %d", otherIndex);
-      }
-      else
-      {
-        Log.infoln("Found other floortherm with index: %d", otherIndex);
-        if (maxOtherIndex < otherIndex)
-          maxOtherIndex = otherIndex;
-      }
+      Log.infoln("Received own index: %d", otherIndex);
     }
     else
     {
-      for (int i = 0; i < 5; i++)
+      Log.infoln("Found other floortherm with index: %d", otherIndex);
+      if (maxOtherIndex < otherIndex)
+        maxOtherIndex = otherIndex;
+    }
+  }
+  else if (strcmp(topic, restartTopic) == 0)
+  {
+    Log.verboseln("Processing Restart topic.");
+    int sentval = atoi(msg);
+    if (sentval == floorthermIndex)
+    {
+      Log.warningln("It has our Index, so....");
+      Log.warningln("Restarting !!!");
+      ESP.restart();
+    }
+  }
+  else if (strstr(topic, logLevelTopic) != NULL)
+  {
+    Log.verboseln("Processing Log Level topic.");
+    for (int l = 0; l < 7; l++)
+    {
+      Log.verboseln("Matching Topic:%s to %s", topic, logLevelNames[l]);
+      if (strstr(topic, logLevelNames[l]) != NULL)
       {
-        // String
-        if (strcmp(topic, tempTopics[i]) == 0)
+        Log.verboseln("Topic matched Log Level %s", logLevelNames[l]);
+        int sentval = atoi(msg);
+        if (sentval == floorthermIndex)
         {
-          int sentval = atoi(msg);
-          if (zoneSetTemp[i] != sentval)
-          {
-            // Send MQTT message that Set Temp Changed
-            Log.infoln("%s Set Temp changed: %d ---> %d", zoneNames[i], zoneSetTemp[i], sentval);
-            zoneSetTemp[i] = sentval;
-            turnOffHeating(i);
-            publishHeatingStatus();
-            storePrefs();
-          }
-        }
-        else if (strcmp(topic, enableTopics[i]) == 0)
-        {
-          int sentval = atoi(msg);
-          if (zoneHeatEnable[i] != (bool)sentval)
-          {
-            // Send MQTT message that Enabled State Changed
-            Log.infoln("%s enable State Changed from %T ----> %T", zoneNames[i], zoneHeatEnable[i], sentval);
-            zoneHeatEnable[i] = (bool)sentval;
-            turnOffHeating(i);
-            publishHeatingStatus();
-            storePrefs();
-          }
-        }
-        else
-        {
-          // Unsupported or unknown command
+          Log.verboseln("It has our Index, so....");
+          Log.verboseln("Setting Log Level to %s", logLevelNames[l]);
+          logLevel = l;
+          Log.setLevel(logLevel);
+          storePrefs();
         }
       }
+    }
+  }
+  else if (strcmp(topic, getStatusTopic) == 0) // This is a request for status
+  {
+    Log.verboseln("Processing GET command!");
+    // Publish Heating Status
+    publishHeatingStatus();
+  }
+  else
+  {
+    bool foundMatchingZone = false;
+    Log.verboseln("None of the other commands, so check Zone commands.");
+    for (int i = 0; i < 5; i++)
+    {
+      // String
+      Log.verboseln("Checking for Zone %s topics", zoneNames[i]);
+
+      if (strcmp(topic, setPointTopics[i]) == 0)
+      {
+        Log.verboseln("Processing SetPoint command for Zone %s", zoneNames[i]);
+        foundMatchingZone = true;
+        int sentval = atoi(msg);
+        if (zoneSetTemp[i] != sentval)
+        {
+          // Send MQTT message that Set Temp Changed
+          Log.infoln("%s Set Temp changed: %d ---> %d", zoneNames[i], zoneSetTemp[i], sentval);
+          zoneSetTemp[i] = sentval;
+          turnOffHeating(i);
+          publishHeatingStatus();
+          storePrefs();
+        }
+      }
+      else if (strcmp(topic, enableTopics[i]) == 0)
+      {
+        Log.verboseln("Processing Heat Enable command for Zone %s", zoneNames[i]);
+        foundMatchingZone = true;
+        int sentval = atoi(msg);
+        if (zoneHeatEnable[i] != (bool)sentval)
+        {
+          // Send MQTT message that Enabled State Changed
+          Log.infoln("%s enable State Changed from %T ----> %T", zoneNames[i], zoneHeatEnable[i], sentval);
+          zoneHeatEnable[i] = (bool)sentval;
+          turnOffHeating(i);
+          publishHeatingStatus();
+          storePrefs();
+        }
+      }
+    }
+
+    if (!foundMatchingZone)
+    {
+      // Unsupported or unknown command
+      Log.warningln("Unsupported or unknown command!!!   ---> %s", topic);
     }
   }
 
@@ -717,13 +804,6 @@ void GetTemps()
   methodName = oldMethodName;
 }
 
-void turnOffHeating(int i)
-{
-  zoneHeating[i] = false;
-  zoneHeatingMode[i] = "OFF";
-  digitalWrite(outPins[i], 0);
-}
-
 void SetHeatControl()
 {
   String oldMethodName = methodName;
@@ -734,14 +814,15 @@ void SetHeatControl()
   {
     if (zoneActualTemp[i] < 90)
     {
-
+      Log.verboseln("Zone %s temp = %.2f  < 90F", zoneNames[i], zoneActualTemp[i]);
       // Are we allowed to heat?
       if (zoneHeatEnable[i])
       { // Yes - Decide if we should heat.
+        Log.verboseln("Zone %s Heating Enabled", zoneNames[i]);
         // Cool enough to think about heating?
         if ((zoneActualTemp[i] <= (zoneSetTemp[i] + 0.5)))
         { // Yes - Decide whether to turn on heat.
-
+          Log.verboseln("Zone %s temperature is below set point", zoneNames[i]);
           // Cool enough to turn on heat?
           if (zoneActualTemp[i] < (zoneSetTemp[i] - 0.5))
           { // Yes - Heat it up!
@@ -754,12 +835,12 @@ void SetHeatControl()
             // IDLE - if it is ON, leave it on i.e. still Heating
             //        if it is OFF, leave it OFF i.e. cooling down from (zoneSetTemp[i] +1)
             // zoneHeatingMode[i] = "IDLE";
-            // Log.verboseln("", zoneNames[i]);
+            Log.verboseln("Zone %s between +/- 0.5F of set point so no change.", zoneNames[i]);
           }
         }
         else
         { // No - Hot enough, stop heating.
-          Log.verboseln("%s IDLE", zoneNames[i]);
+          Log.verboseln("Zone %s temperature is above set point so turning off heating - IDLE", zoneNames[i]);
           zoneHeating[i] = false;
           zoneHeatingMode[i] = "IDLE";
         }
@@ -769,11 +850,11 @@ void SetHeatControl()
         const char *warningMessage = "Unrequested Heating!!!";
         if (zoneHeating[i])
         {
-          Log.verboseln("!!! ERROR !!! %s", warningMessage);
+          Log.warningln("!!! ERROR !!! %s", warningMessage);
           // Should also send MQTT message to alert someone
           publishZoneAlarmMessage(strdup(zoneNames[i]), strdup(warningMessage));
         }
-        Log.verboseln("!!! ERROR !!! %s - Shutting OFF %s", warningMessage, zoneNames[i]);
+        // Log.warningln("!!! ERROR !!! %s - Shutting OFF %s", warningMessage, zoneNames[i]);
         zoneHeating[i] = false;
         zoneHeatingMode[i] = "OFF";
       }
@@ -946,6 +1027,7 @@ void setup()
 
   preferences.begin("ACclimate", false);
 
+
   Serial.begin(115200);
 
   while (!Serial && millis() < 5000)
@@ -953,18 +1035,23 @@ void setup()
 
   delay(500);
 
-  Log.begin(LOG_LEVEL, &Serial);
+  Log.begin(logLevel, &Serial);
   Log.setPrefix(printTimestamp);
   Log.setShowLevel(false);
 
   Log.infoln("FloorTherm starting...");
+
+  loadPrefs();
+  // Hack to set logLevel again after getting preferences
+  Log.setLevel(logLevel);
 
   for (int i = 0; i < 5; i++)
     pinMode(outPins[i], OUTPUT);
 
   pinMode(LED_PIN, OUTPUT);
 
-  loadPrefs();
+
+  buildCommandTopics();
 
   setupDisplay();
 
@@ -1000,6 +1087,7 @@ void loop()
   methodName = "loop()";
 
   GetTemps();
+  
   SetHeatControl();
   displayHeatingStatus();
   // delay(1000);
